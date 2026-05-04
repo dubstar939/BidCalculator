@@ -57,6 +57,18 @@ const FEE_TYPE_TOOLTIPS = {
   'Per Service': 'Charged for each unique service line item listed in the bid (e.g. 2 different sizes = 2 charges).'
 };
 
+const TABLE_COLUMN_TOOLTIPS = {
+  'Stream': 'The type of waste being collected (e.g., MSW, Recycling, Cardboard).',
+  'Container': 'The size and type of container used for this service.',
+  'Frequency': 'How often the container is serviced (e.g., 1xw = 1 time per week).',
+  'Qty': 'The number of identical containers serviced at this frequency.',
+  'Unit Price': 'The base price charged per container per month or per service event.',
+  'Est. Hauls/mo': 'The projected number of times this service is performed per month.',
+  'Est. Tons/mo': 'The projected actual weight of waste collected per month for this service.',
+  'Total Price': 'The monthly base cost before additional fees.',
+  'Row Total': 'The total monthly cost including all estimated haul and ton charges for this service.'
+};
+
 export default function App() {
   const [bids, setBids] = useState<Bid[]>(INITIAL_BIDS);
   const [selectedBidId, setSelectedBidId] = useState<string | null>(INITIAL_BIDS[0].id);
@@ -65,12 +77,55 @@ export default function App() {
   const [isEditing, setIsEditing] = useState(false);
   const [editingBid, setEditingBid] = useState<Bid | null>(null);
   const [darkMode, setDarkMode] = useState(false);
+  const [hoveredBidId, setHoveredBidId] = useState<string | null>(null);
+  const [chartView, setChartView] = useState<'monthly' | 'annual'>('monthly');
+  const [showComparisonView, setShowComparisonView] = useState(false);
+
+  // Auto-save feature
+  React.useEffect(() => {
+    const savedBids = localStorage.getItem('bidout_bids');
+    if (savedBids) {
+      try {
+        setBids(JSON.parse(savedBids));
+      } catch (e) {
+        console.error('Failed to load bids from storage');
+      }
+    }
+  }, []);
+
+  React.useEffect(() => {
+    localStorage.setItem('bidout_bids', JSON.stringify(bids));
+  }, [bids]);
+
+  React.useEffect(() => {
+    if (isEditing && editingBid) {
+      const timer = setTimeout(() => {
+        localStorage.setItem('bidout_temp_edit', JSON.stringify(editingBid));
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [editingBid, isEditing]);
+
+  React.useEffect(() => {
+    const tempEdit = localStorage.getItem('bidout_temp_edit');
+    if (tempEdit && isEditing) {
+      try {
+        const parsed = JSON.parse(tempEdit);
+        if (parsed.id === editingBid?.id) {
+          setEditingBid(parsed);
+        }
+      } catch (e) {
+        console.error('Failed to restore temp edit');
+      }
+    }
+  }, [isEditing]);
 
   const selectedBid = useMemo(() => 
     bids.find(b => b.id === selectedBidId) || null
   , [bids, selectedBidId]);
 
   const activeBid = isEditing ? editingBid : selectedBid;
+  const activeResults = useMemo(() => activeBid ? calculateBidTotals(activeBid) : null, [activeBid]);
 
   const bidResults = useMemo(() => 
     bids.map(bid => ({
@@ -81,12 +136,13 @@ export default function App() {
 
   const chartData = useMemo(() => 
     bidResults.map(({ bid, results }) => ({
+      id: bid.id,
       name: bid.haulerName,
       'Monthly Total': results.monthlyTotal,
-      'Annual Total': results.annualTotal / 12, // For scaling
-      'Contract Total': results.contractTermTotal / bid.contractTermMonths // For scaling
+      'Annual Total': results.annualTotal,
+      'Display Value': chartView === 'monthly' ? results.monthlyTotal : results.annualTotal
     }))
-  , [bidResults]);
+  , [bidResults, chartView]);
 
   const handleAddBid = () => {
     const newBid: Bid = {
@@ -213,7 +269,7 @@ export default function App() {
               <h1 className={cn(
                 "text-xl font-bold tracking-tight leading-none",
                 darkMode ? "text-white" : "text-slate-900"
-              )}>Bidout Master</h1>
+              )}>Haululator by 939PRO STUDIO</h1>
               <div className="flex items-center gap-1 mt-1">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client:</span>
                 <input 
@@ -270,11 +326,14 @@ export default function App() {
                       key={bid.id}
                       layout
                       onClick={() => setSelectedBidId(bid.id)}
+                      onMouseEnter={() => setHoveredBidId(bid.id)}
+                      onMouseLeave={() => setHoveredBidId(null)}
                       className={cn(
                         "p-4 rounded-xl border cursor-pointer transition-all group relative",
                         isSelected 
                           ? (darkMode ? "bg-slate-800 border-blue-500 shadow-lg ring-1 ring-blue-500" : "bg-white border-blue-500 shadow-md ring-1 ring-blue-500")
-                          : (darkMode ? "bg-slate-900 border-slate-800 hover:border-slate-700" : "bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm")
+                          : (darkMode ? "bg-slate-900 border-slate-800 hover:border-slate-700" : "bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm"),
+                        hoveredBidId === bid.id && !isSelected && (darkMode ? "ring-2 ring-blue-500/50" : "ring-2 ring-blue-500/30")
                       )}
                     >
                       <div className="flex justify-between items-start mb-2">
@@ -593,19 +652,83 @@ export default function App() {
                             "text-[10px] font-bold uppercase tracking-widest border-b",
                             darkMode ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"
                           )}>
-                            <th className="px-6 py-4">Stream</th>
-                            <th className="px-6 py-4">Container</th>
-                            <th className="px-6 py-4">Frequency</th>
-                            <th className="px-6 py-4">Qty</th>
-                            <th className="px-6 py-4">Unit Price</th>
+                            <th className="px-6 py-4">
+                              <div className="flex items-center gap-1 group/th relative">
+                                Stream <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
+                                  {TABLE_COLUMN_TOOLTIPS['Stream']}
+                                </div>
+                              </div>
+                            </th>
+                            <th className="px-6 py-4">
+                              <div className="flex items-center gap-1 group/th relative">
+                                Container <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
+                                  {TABLE_COLUMN_TOOLTIPS['Container']}
+                                </div>
+                              </div>
+                            </th>
+                            <th className="px-6 py-4">
+                              <div className="flex items-center gap-1 group/th relative">
+                                Frequency <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
+                                  {TABLE_COLUMN_TOOLTIPS['Frequency']}
+                                </div>
+                              </div>
+                            </th>
+                            <th className="px-6 py-4">
+                              <div className="flex items-center gap-1 group/th relative">
+                                Qty <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
+                                  {TABLE_COLUMN_TOOLTIPS['Qty']}
+                                </div>
+                              </div>
+                            </th>
+                            <th className="px-6 py-4">
+                              <div className="flex items-center gap-1 group/th relative">
+                                Unit Price <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
+                                  {TABLE_COLUMN_TOOLTIPS['Unit Price']}
+                                </div>
+                              </div>
+                            </th>
                             {isEditing && (
                               <>
-                                <th className="px-6 py-4">Est. Hauls/mo</th>
-                                <th className="px-6 py-4">Est. Tons/mo</th>
+                                <th className="px-6 py-4">
+                                  <div className="flex items-center gap-1 group/th relative">
+                                    Est. Hauls/mo <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                    <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
+                                      {TABLE_COLUMN_TOOLTIPS['Est. Hauls/mo']}
+                                    </div>
+                                  </div>
+                                </th>
+                                <th className="px-6 py-4">
+                                  <div className="flex items-center gap-1 group/th relative">
+                                    Est. Tons/mo <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                    <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
+                                      {TABLE_COLUMN_TOOLTIPS['Est. Tons/mo']}
+                                    </div>
+                                  </div>
+                                </th>
                               </>
                             )}
-                            <th className="px-6 py-4">Total Price</th>
-                            <th className="px-6 py-4 text-right">Row Total</th>
+                            <th className="px-6 py-4">
+                              <div className="flex items-center gap-1 group/th relative">
+                                Total Price <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
+                                  {TABLE_COLUMN_TOOLTIPS['Total Price']}
+                                </div>
+                              </div>
+                            </th>
+                            <th className="px-6 py-4 text-right">
+                              <div className="flex items-center justify-end gap-1 group/th relative">
+                                <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                Row Total
+                                <div className="absolute top-full right-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl text-left">
+                                  {TABLE_COLUMN_TOOLTIPS['Row Total']}
+                                </div>
+                              </div>
+                            </th>
                             <th className="px-6 py-4"></th>
                           </tr>
                         </thead>
@@ -931,16 +1054,25 @@ export default function App() {
                                           step="0.01"
                                           value={fee.value}
                                           onChange={(e) => {
-                                            let val = parseFloat(e.target.value) || 0;
+                                            const rawVal = e.target.value;
+                                            if (rawVal === '') {
+                                              const newFees = activeBid!.fees.map(f => 
+                                                f.id === fee.id ? { ...f, value: 0 } : f
+                                              );
+                                              updateBid({ ...activeBid!, fees: newFees });
+                                              return;
+                                            }
+                                            
+                                            let val = parseFloat(rawVal) || 0;
                                             if (fee.type === 'Percentage') {
                                               val = Math.min(val, 100);
                                             } else {
                                               val = Math.max(0, val);
                                             }
-                                            const newFees = activeBid.fees.map(f => 
+                                            const newFees = activeBid!.fees.map(f => 
                                               f.id === fee.id ? { ...f, value: val } : f
                                             );
-                                            updateBid({ ...activeBid, fees: newFees });
+                                            updateBid({ ...activeBid!, fees: newFees });
                                           }}
                                           className={cn(
                                             "w-16 border-none rounded px-2 py-1 text-sm text-right",
@@ -952,18 +1084,36 @@ export default function App() {
                                         />
                                         <span>{fee.type === 'Percentage' ? '%' : '$'}</span>
                                       </div>
-                                      {fee.type === 'Percentage' && fee.value >= 100 && (
-                                        <p className="text-[8px] text-red-500 font-bold mt-0.5">Value is maxed at 100%</p>
-                                      )}
-                                      {fee.type === 'Percentage' && fee.value >= 90 && fee.value < 100 && (
-                                        <p className="text-[8px] text-amber-500 font-bold mt-0.5">High percentage warning</p>
+                                      {fee.type === 'Percentage' && (
+                                        <div className="text-right mt-1">
+                                          {fee.value >= 100 && (
+                                            <p className="text-[8px] text-red-500 font-bold mb-0.5">Value is maxed at 100%</p>
+                                          )}
+                                          {fee.value >= 90 && fee.value < 100 && (
+                                            <p className="text-[8px] text-amber-500 font-bold mb-0.5">High percentage warning</p>
+                                          )}
+                                          {activeResults && (
+                                            <p className="text-[9px] text-slate-400 font-medium">
+                                              ≈ {formatCurrency(activeResults.monthlySubtotal * (fee.value / 100))}
+                                            </p>
+                                          )}
+                                        </div>
                                       )}
                                       {(fee.type !== 'Percentage' && fee.value < 0) && (
                                         <p className="text-[8px] text-red-500 font-bold mt-0.5">Negative value warning</p>
                                       )}
                                     </>
                                   ) : (
-                                    fee.type === 'Percentage' ? `${fee.value}%` : formatCurrency(fee.value)
+                                    fee.type === 'Percentage' ? (
+                                      <div className="text-right">
+                                        <p className="font-black">{fee.value}%</p>
+                                        {activeResults && (
+                                          <p className="text-[10px] text-slate-400 font-medium">
+                                            {formatCurrency(activeResults.monthlySubtotal * (fee.value / 100))}
+                                          </p>
+                                        )}
+                                      </div>
+                                    ) : formatCurrency(fee.value)
                                   )}
                                 </div>
                                 <button 
@@ -978,30 +1128,28 @@ export default function App() {
                               </div>
                             </div>
                             
-                            {/* Fee Description */}
+                            {/* Fee Description / Notes */}
                             <div className="mt-1">
                               {isEditing ? (
                                 <textarea 
-                                  placeholder="Fee description..."
+                                  placeholder="Fee description/notes..."
                                   value={fee.description || ''}
                                   onChange={(e) => {
-                                    const newFees = activeBid.fees.map(f => 
+                                    const newFees = activeBid!.fees.map(f => 
                                       f.id === fee.id ? { ...f, description: e.target.value } : f
                                     );
-                                    updateBid({ ...activeBid, fees: newFees });
+                                    updateBid({ ...activeBid!, fees: newFees });
                                   }}
                                   className={cn(
                                     "w-full border-none rounded px-2 py-1 text-[10px] min-h-[40px] resize-none",
-                                    darkMode ? "bg-slate-700 text-slate-300 placeholder-slate-500" : "bg-slate-100 text-slate-500 placeholder-slate-400"
+                                    darkMode ? "bg-slate-700/50 text-slate-300" : "bg-slate-100/50 text-slate-600"
                                   )}
                                 />
-                              ) : (
-                                fee.description && (
-                                  <p className="text-[10px] text-slate-500 italic leading-relaxed">
-                                    {fee.description}
-                                  </p>
-                                )
-                              )}
+                              ) : fee.description ? (
+                                <p className="text-[10px] text-slate-500 italic border-l-2 border-slate-200 dark:border-slate-700 pl-2 py-1 leading-relaxed">
+                                  {fee.description}
+                                </p>
+                              ) : null}
                             </div>
                           </div>
                         ))}
@@ -1016,16 +1164,44 @@ export default function App() {
                       "rounded-2xl border shadow-sm p-6 transition-colors",
                       darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
                     )}>
-                      <h3 className={cn(
-                        "font-bold flex items-center gap-2 mb-6",
-                        darkMode ? "text-slate-100" : "text-slate-800"
-                      )}>
-                        <BarChart3 className="w-5 h-5 text-purple-500" />
-                        Cost Comparison
-                      </h3>
-                      <div className="h-[250px] w-full">
+                      <div className="flex items-center justify-between mb-6">
+                        <h3 className={cn(
+                          "font-bold flex items-center gap-2",
+                          darkMode ? "text-slate-100" : "text-slate-800"
+                        )}>
+                          <BarChart3 className="w-5 h-5 text-purple-500" />
+                          Cost Comparison
+                        </h3>
+                        <div className={cn(
+                          "flex bg-slate-100 rounded-lg p-1",
+                          darkMode ? "bg-slate-800" : "bg-slate-100"
+                        )}>
+                          <button 
+                            onClick={() => setChartView('monthly')}
+                            className={cn(
+                              "px-3 py-1 text-xs font-bold rounded-md transition-all",
+                              chartView === 'monthly' 
+                                ? (darkMode ? "bg-slate-700 text-blue-400 shadow-sm" : "bg-white text-blue-600 shadow-sm")
+                                : "text-slate-400 hover:text-slate-600"
+                            )}
+                          >Monthly</button>
+                          <button 
+                            onClick={() => setChartView('annual')}
+                            className={cn(
+                              "px-3 py-1 text-xs font-bold rounded-md transition-all",
+                              chartView === 'annual' 
+                                ? (darkMode ? "bg-slate-700 text-blue-400 shadow-sm" : "bg-white text-blue-600 shadow-sm")
+                                : "text-slate-400 hover:text-slate-600"
+                            )}
+                          >Annual</button>
+                        </div>
+                      </div>
+                      <div className="h-[300px] w-full">
                         <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={chartData}>
+                          <BarChart 
+                            data={chartData}
+                            onMouseLeave={() => setHoveredBidId(null)}
+                          >
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#1e293b" : "#f1f5f9"} />
                             <XAxis 
                               dataKey="name" 
@@ -1036,22 +1212,44 @@ export default function App() {
                             <YAxis 
                               axisLine={false} 
                               tickLine={false} 
-                              tick={{ fill: darkMode ? '#94a3b8' : '#64748b', fontSize: 10, fontWeight: 600 }}
-                              tickFormatter={(value) => `$${value}`}
+                              tick={{ fill: darkMode ? '#14a3b8' : '#64748b', fontSize: 10, fontWeight: 600 }}
+                              tickFormatter={(value) => `$${value > 1000 ? (value/1000).toFixed(1) + 'k' : value}`}
                             />
                             <Tooltip 
                               cursor={{ fill: darkMode ? '#1e293b' : '#f8fafc' }}
-                              contentStyle={{ 
-                                borderRadius: '12px', 
-                                border: 'none', 
-                                boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                                backgroundColor: darkMode ? '#0f172a' : '#ffffff',
-                                color: darkMode ? '#f8fafc' : '#0f172a'
+                              content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                  const data = payload[0].payload;
+                                  return (
+                                    <div className={cn(
+                                      "p-3 rounded-xl shadow-xl border-none",
+                                      darkMode ? "bg-slate-800 text-white" : "bg-white text-slate-900"
+                                    )}>
+                                      <p className="text-xs font-bold mb-1">{data.name}</p>
+                                      <p className="text-sm font-black text-blue-600">
+                                        {formatCurrency(data['Display Value'])}
+                                        <span className="text-[10px] text-slate-400 font-normal ml-1">
+                                          / {chartView === 'monthly' ? 'mo' : 'yr'}
+                                        </span>
+                                      </p>
+                                    </div>
+                                  );
+                                }
+                                return null;
                               }}
                             />
-                            <Bar dataKey="Monthly Total" radius={[4, 4, 0, 0]}>
+                            <Bar 
+                              dataKey="Display Value" 
+                              radius={[6, 6, 0, 0]}
+                              onClick={(data) => setSelectedBidId(data.id)}
+                            >
                               {chartData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.name === activeBid.haulerName ? '#2563eb' : (darkMode ? '#334155' : '#cbd5e1')} />
+                                <Cell 
+                                  key={`cell-${index}`} 
+                                  onMouseEnter={() => setHoveredBidId(entry.id)}
+                                  fill={entry.id === selectedBidId ? '#2563eb' : (hoveredBidId === entry.id ? '#3b82f6' : (darkMode ? '#334155' : '#cbd5e1'))} 
+                                  className="transition-all duration-300 cursor-pointer"
+                                />
                               ))}
                             </Bar>
                           </BarChart>
@@ -1070,13 +1268,21 @@ export default function App() {
                           "p-6 border-b",
                           darkMode ? "bg-slate-800/50 border-slate-800" : "bg-slate-50/50 border-slate-100"
                         )}>
-                          <h3 className={cn(
-                            "font-bold flex items-center gap-2",
-                            darkMode ? "text-slate-100" : "text-slate-800"
-                          )}>
-                            <TrendingUp className="w-5 h-5 text-emerald-500" />
-                            Key Metrics Comparison
-                          </h3>
+                          <div className="flex items-center justify-between">
+                            <h3 className={cn(
+                              "font-bold flex items-center gap-2",
+                              darkMode ? "text-slate-100" : "text-slate-800"
+                            )}>
+                              <TrendingUp className="w-5 h-5 text-emerald-500" />
+                              Key Metrics Comparison
+                            </h3>
+                            <button 
+                              onClick={() => setShowComparisonView(true)}
+                              className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100"
+                            >
+                              <ArrowRightLeft className="w-3.5 h-3.5" /> Full Comparison
+                            </button>
+                          </div>
                         </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-left border-collapse">
@@ -1431,7 +1637,7 @@ export default function App() {
         <div className="flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-2 opacity-50">
             <Truck className="w-5 h-5" />
-            <span className="text-sm font-bold uppercase tracking-widest">Bidout Master v1.0</span>
+            <span className="text-sm font-bold uppercase tracking-widest text-slate-400">Haululator by 939PRO STUDIO v1.0</span>
           </div>
           <div className="flex items-center gap-8">
             <a href="#" className="text-xs font-bold text-slate-400 hover:text-slate-600 uppercase tracking-widest transition-colors">Documentation</a>
@@ -1440,6 +1646,191 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Comparison Detailed View Overlay */}
+      <AnimatePresence>
+        {showComparisonView && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed inset-0 z-50 bg-white dark:bg-slate-950 overflow-y-auto"
+          >
+            <div className="max-w-7xl mx-auto px-4 py-8">
+              <div className="flex items-center justify-between mb-8 pb-4 border-b">
+                <div className="flex items-center gap-4">
+                  <button 
+                    onClick={() => setShowComparisonView(false)}
+                    className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all"
+                  >
+                    <Plus className="w-6 h-6 rotate-45" />
+                  </button>
+                  <h2 className="text-2xl font-black">Detailed Bid Comparison</h2>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Selected Bids:</span>
+                  <div className="flex -space-x-2">
+                    {selectedCompareIds.map((id, i) => (
+                      <div 
+                        key={id}
+                        className="w-8 h-8 rounded-full border-2 border-white dark:border-slate-950 bg-blue-500 flex items-center justify-center text-[10px] font-bold text-white shadow-sm"
+                        style={{ zIndex: 10 - i }}
+                      >
+                        {bids.find(b => b.id === id)?.haulerName.charAt(0)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-12">
+                {/* 1. High Level Metrics */}
+                <section>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-blue-500 mb-6 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" /> Financial Summary
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr>
+                          <th className="p-4 border text-left bg-slate-50 dark:bg-slate-900 w-1/4">Metric</th>
+                          {selectedCompareIds.map(id => (
+                            <th key={id} className="p-4 border text-center bg-slate-50 dark:bg-slate-900">
+                              {bids.find(b => b.id === id)?.haulerName}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          { label: 'Monthly Subtotal', key: 'monthlySubtotal' },
+                          { label: 'Monthly Surcharge/Fees', key: 'monthlyFees' },
+                          { label: 'Monthly Total', key: 'monthlyTotal', highlight: true },
+                          { label: 'Annual Total', key: 'annualTotal' },
+                          { label: 'Contract Term Total', key: 'contractTermTotal' },
+                          { label: 'Est. Monthly Tonnage', key: 'totalEstimatedTons', unit: ' Tons' },
+                          { label: 'Est. Monthly Hauls', key: 'totalEstimatedHauls', unit: ' Hauls' }
+                        ].map((row, i) => (
+                          <tr key={i}>
+                            <td className="p-4 border font-bold text-sm">{row.label}</td>
+                            {selectedCompareIds.map(id => {
+                              const results = calculateBidTotals(bids.find(b => b.id === id)!);
+                              const value = results[row.key as keyof typeof results] as number;
+                              return (
+                                <td key={id} className={cn(
+                                  "p-4 border text-center font-bold",
+                                  row.highlight ? "text-lg text-blue-600 bg-blue-50/30" : ""
+                                )}>
+                                  {typeof value === 'number' ? 
+                                    (row.unit ? `${value}${row.unit}` : formatCurrency(value)) 
+                                    : value
+                                  }
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                {/* 2. Services Comparison */}
+                <section>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-purple-500 mb-6 flex items-center gap-2">
+                    <Truck className="w-4 h-4" /> Service Details
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {selectedCompareIds.map(id => {
+                      const bid = bids.find(b => b.id === id)!;
+                      return (
+                        <div key={id} className="border rounded-2xl p-6 bg-slate-50 dark:bg-slate-900">
+                          <h4 className="font-bold text-lg mb-4 pb-2 border-b">{bid.haulerName}</h4>
+                          <div className="space-y-4">
+                            {bid.services.map((s, si) => (
+                              <div key={si} className="text-xs bg-white dark:bg-slate-800 p-3 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                                <div className="flex justify-between items-start mb-2">
+                                  <span className="font-black text-blue-500 uppercase">{s.stream}</span>
+                                  <span className="font-bold">{s.quantity}x {s.containerSize}</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-slate-500">
+                                  <div>Freq: <span className="text-slate-800 dark:text-slate-200 font-bold">{s.frequency}</span></div>
+                                  <div>Rate: <span className="text-slate-800 dark:text-slate-200 font-bold">{formatCurrency(s.baseRate)}</span></div>
+                                  <div>Hauls: <span className="text-slate-800 dark:text-slate-200 font-bold">{s.estimatedHaulsPerMonth}</span></div>
+                                  <div>Tons: <span className="text-slate-800 dark:text-slate-200 font-bold">{s.estimatedTonsPerMonth}</span></div>
+                                </div>
+                              </div>
+                            ))}
+                            {bid.services.length === 0 && <p className="text-xs italic text-slate-400">No services listed.</p>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {/* 3. Fees Comparison */}
+                <section>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-amber-500 mb-6 flex items-center gap-2">
+                    <DollarSign className="w-4 h-4" /> Additional Fees & Surcharges
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {selectedCompareIds.map(id => {
+                      const bid = bids.find(b => b.id === id)!;
+                      return (
+                        <div key={id} className="border rounded-2xl p-6 bg-slate-50 dark:bg-slate-900 border-amber-100 dark:border-amber-900/30">
+                          <h4 className="font-bold text-lg mb-4 pb-2 border-b flex items-center justify-between">
+                            {bid.haulerName}
+                            <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                              {bid.fees.length} Fees
+                            </span>
+                          </h4>
+                          <div className="space-y-3">
+                            <div className="text-[10px] text-slate-400 font-bold uppercase grid grid-cols-2 gap-2 px-2">
+                              <span>Surcharge</span>
+                              <span className="text-right">Value</span>
+                            </div>
+                            <div className="bg-white dark:bg-slate-800 p-2 rounded-xl text-[11px] space-y-1 mb-2">
+                              <div className="flex justify-between">
+                                <span>Fuel Surcharge</span>
+                                <span className="font-bold">{bid.fuelSurchargePercent}%</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Environmental Fee</span>
+                                <span className="font-bold">{bid.environmentalFeePercent}%</span>
+                              </div>
+                            </div>
+                            {bid.fees.map((f, fi) => (
+                              <div key={fi} className="bg-white dark:bg-slate-800 p-3 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 flex justify-between items-center capitalize">
+                                <div className="flex flex-col">
+                                  <span className="font-bold text-slate-800 dark:text-slate-200">{f.name}</span>
+                                  <span className="text-[9px] text-slate-400 font-bold uppercase">{f.type}</span>
+                                </div>
+                                <span className="font-black text-amber-600">
+                                  {f.type === 'Percentage' ? `${f.value}%` : formatCurrency(f.value)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              </div>
+            </div>
+            
+            <div className="sticky bottom-0 p-6 bg-white/80 dark:bg-slate-950/80 backdrop-blur-md border-t flex justify-center">
+              <button 
+                onClick={() => setShowComparisonView(false)}
+                className="bg-slate-900 dark:bg-white text-white dark:text-slate-950 px-12 py-3 rounded-2xl font-bold hover:scale-105 transition-all shadow-xl"
+              >
+                Close Detailed View
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
