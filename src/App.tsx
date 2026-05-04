@@ -54,7 +54,7 @@ const FEE_TYPE_TOOLTIPS = {
   'Percentage': 'Calculated as a percentage of the base service subtotal.',
   'Per Haul': 'Charged every time a container is emptied.',
   'Per Ton': 'Charged based on the actual weight of waste collected.',
-  'Per Service': 'Charged for each service line item included in the bid.'
+  'Per Service': 'Charged for each unique service line item listed in the bid (e.g. 2 different sizes = 2 charges).'
 };
 
 export default function App() {
@@ -63,11 +63,14 @@ export default function App() {
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
   const [clientName, setClientName] = useState('Acme Corp');
   const [isEditing, setIsEditing] = useState(false);
+  const [editingBid, setEditingBid] = useState<Bid | null>(null);
   const [darkMode, setDarkMode] = useState(false);
 
   const selectedBid = useMemo(() => 
     bids.find(b => b.id === selectedBidId) || null
   , [bids, selectedBidId]);
+
+  const activeBid = isEditing ? editingBid : selectedBid;
 
   const bidResults = useMemo(() => 
     bids.map(bid => ({
@@ -96,19 +99,48 @@ export default function App() {
     };
     setBids([...bids, newBid]);
     setSelectedBidId(newBid.id);
+    setEditingBid({...newBid});
     setIsEditing(true);
   };
 
+  const handleStartEditing = () => {
+    if (selectedBid) {
+      setEditingBid(JSON.parse(JSON.stringify(selectedBid)));
+      setIsEditing(true);
+    }
+  };
+
+  const handleCancelEditing = () => {
+    setIsEditing(false);
+    setEditingBid(null);
+  };
+
+  const handleSaveEditing = () => {
+    if (editingBid) {
+      setBids(bids.map(b => b.id === editingBid.id ? editingBid : b));
+      setIsEditing(false);
+      setEditingBid(null);
+    }
+  };
+
   const handleDeleteBid = (id: string) => {
-    const newBids = bids.filter(b => b.id !== id);
-    setBids(newBids);
-    if (selectedBidId === id) {
-      setSelectedBidId(newBids[0]?.id || null);
+    if (window.confirm('Are you sure you want to delete this bid?')) {
+      const newBids = bids.filter(b => b.id !== id);
+      setBids(newBids);
+      if (selectedBidId === id) {
+        setSelectedBidId(newBids.length > 0 ? newBids[0].id : null);
+        setIsEditing(false);
+        setEditingBid(null);
+      }
     }
   };
 
   const updateBid = (updatedBid: Bid) => {
-    setBids(bids.map(b => b.id === updatedBid.id ? updatedBid : b));
+    if (isEditing) {
+      setEditingBid(updatedBid);
+    } else {
+      setBids(bids.map(b => b.id === updatedBid.id ? updatedBid : b));
+    }
   };
 
   const handleExportCSV = () => {
@@ -338,9 +370,9 @@ export default function App() {
           {/* Main Content: Bid Details */}
           <div className="lg:col-span-8">
             <AnimatePresence mode="wait">
-              {selectedBid ? (
+              {activeBid ? (
                 <motion.div
-                  key={selectedBid.id}
+                  key={activeBid.id}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
@@ -361,28 +393,48 @@ export default function App() {
                             {isEditing ? (
                               <input 
                                 type="text" 
-                                value={selectedBid.haulerName}
-                                onChange={(e) => updateBid({ ...selectedBid, haulerName: e.target.value })}
+                                value={activeBid.haulerName}
+                                onChange={(e) => updateBid({ ...activeBid, haulerName: e.target.value })}
                                 className={cn(
                                   "border-none focus:ring-2 focus:ring-blue-500 rounded px-2 -ml-2",
                                   darkMode ? "bg-slate-800 text-white" : "bg-slate-50 text-slate-900"
                                 )}
                               />
-                            ) : selectedBid.haulerName}
+                            ) : activeBid.haulerName}
                           </h2>
-                          <button 
-                            onClick={() => setIsEditing(!isEditing)}
-                            className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
-                          >
-                            <Settings2 className="w-5 h-5" />
-                          </button>
-                          <button 
-                            onClick={handleExportCSV}
-                            className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
-                            title="Export Bid to CSV"
-                          >
-                            <Download className="w-5 h-5" />
-                          </button>
+                          <div className="flex items-center gap-2">
+                            {isEditing ? (
+                              <>
+                                <button 
+                                  onClick={handleSaveEditing}
+                                  className="px-3 py-1 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                                >
+                                  Save Changes
+                                </button>
+                                <button 
+                                  onClick={handleCancelEditing}
+                                  className="px-3 py-1 bg-slate-200 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-300 transition-colors shadow-sm"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <button 
+                                onClick={handleStartEditing}
+                                className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
+                                title="Edit Bid"
+                              >
+                                <Settings2 className="w-5 h-5" />
+                              </button>
+                            )}
+                            <button 
+                              onClick={handleExportCSV}
+                              className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
+                              title="Export Bid to CSV"
+                            >
+                              <Download className="w-5 h-5" />
+                            </button>
+                          </div>
                         </div>
                         <div className="text-slate-500 font-medium flex items-center gap-2">
                           <FileText className="w-4 h-4" />
@@ -391,8 +443,8 @@ export default function App() {
                               <input 
                                 type="number" 
                                 min="0"
-                                value={selectedBid.contractTermMonths}
-                                onChange={(e) => updateBid({ ...selectedBid, contractTermMonths: parseInt(e.target.value) || 0 })}
+                                value={activeBid.contractTermMonths}
+                                onChange={(e) => updateBid({ ...activeBid, contractTermMonths: parseInt(e.target.value) || 0 })}
                                 className={cn(
                                   "w-16 border-none rounded px-1 py-0.5 text-sm",
                                   darkMode ? "bg-slate-800 text-white" : "bg-slate-50 text-slate-900"
@@ -403,8 +455,8 @@ export default function App() {
                                 type="number" 
                                 min="0"
                                 step="0.1"
-                                value={selectedBid.cpiEscalationPercent}
-                                onChange={(e) => updateBid({ ...selectedBid, cpiEscalationPercent: parseFloat(e.target.value) || 0 })}
+                                value={activeBid.cpiEscalationPercent}
+                                onChange={(e) => updateBid({ ...activeBid, cpiEscalationPercent: parseFloat(e.target.value) || 0 })}
                                 className={cn(
                                   "w-16 border-none rounded px-1 py-0.5 text-sm",
                                   darkMode ? "bg-slate-800 text-white" : "bg-slate-50 text-slate-900"
@@ -414,7 +466,7 @@ export default function App() {
                             </div>
                           ) : (
                             <span className="text-sm">
-                              {selectedBid.contractTermMonths} Month Contract • {selectedBid.cpiEscalationPercent}% Annual Escalation
+                              {activeBid.contractTermMonths} Month Contract • {activeBid.cpiEscalationPercent}% Annual Escalation
                             </span>
                           )}
                         </div>
@@ -422,7 +474,7 @@ export default function App() {
                       <div className="text-right">
                         <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Monthly Total</p>
                         <p className="text-4xl font-black text-blue-600">
-                          {formatCurrency(calculateBidTotals(selectedBid).monthlyTotal)}
+                          {formatCurrency(calculateBidTotals(activeBid).monthlyTotal)}
                         </p>
                       </div>
                     </div>
@@ -432,12 +484,12 @@ export default function App() {
                       {[
                         { 
                           label: 'Base Services', 
-                          value: formatCurrency(calculateBidTotals(selectedBid).breakdown.services), 
+                          value: formatCurrency(calculateBidTotals(activeBid).breakdown.services), 
                           icon: Truck 
                         },
                         { 
                           label: 'Total Fees', 
-                          value: formatCurrency(calculateBidTotals(selectedBid).monthlyFees), 
+                          value: formatCurrency(calculateBidTotals(activeBid).monthlyFees), 
                           icon: DollarSign 
                         },
                         { 
@@ -448,8 +500,8 @@ export default function App() {
                                 type="number" 
                                 min="0"
                                 step="0.1"
-                                value={selectedBid.fuelSurchargePercent}
-                                onChange={(e) => updateBid({ ...selectedBid, fuelSurchargePercent: parseFloat(e.target.value) || 0 })}
+                                value={activeBid.fuelSurchargePercent}
+                                onChange={(e) => updateBid({ ...activeBid, fuelSurchargePercent: parseFloat(e.target.value) || 0 })}
                                 className={cn(
                                   "w-12 border-none rounded px-1 py-0.5 text-xs font-black",
                                   darkMode ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-900"
@@ -457,7 +509,7 @@ export default function App() {
                               />
                               <span>%</span>
                             </div>
-                          ) : `${selectedBid.fuelSurchargePercent}%`, 
+                          ) : `${activeBid.fuelSurchargePercent}%`, 
                           icon: Calculator 
                         },
                         { 
@@ -468,8 +520,8 @@ export default function App() {
                                 type="number" 
                                 min="0"
                                 step="0.1"
-                                value={selectedBid.environmentalFeePercent}
-                                onChange={(e) => updateBid({ ...selectedBid, environmentalFeePercent: parseFloat(e.target.value) || 0 })}
+                                value={activeBid.environmentalFeePercent}
+                                onChange={(e) => updateBid({ ...activeBid, environmentalFeePercent: parseFloat(e.target.value) || 0 })}
                                 className={cn(
                                   "w-12 border-none rounded px-1 py-0.5 text-xs font-black",
                                   darkMode ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-900"
@@ -477,7 +529,7 @@ export default function App() {
                               />
                               <span>%</span>
                             </div>
-                          ) : `${selectedBid.environmentalFeePercent}%`, 
+                          ) : `${activeBid.environmentalFeePercent}%`, 
                           icon: Info 
                         },
                       ].map((stat, i) => (
@@ -523,10 +575,11 @@ export default function App() {
                             frequency: '1xw',
                             quantity: 1,
                             baseRate: 0,
+                            unitPrice: 0,
                             estimatedHaulsPerMonth: 0,
                             estimatedTonsPerMonth: 0
                           };
-                          updateBid({ ...selectedBid, services: [...selectedBid.services, newService] });
+                          updateBid({ ...activeBid, services: [...activeBid.services, newService] });
                         }}
                         className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
                       >
@@ -544,14 +597,15 @@ export default function App() {
                             <th className="px-6 py-4">Container</th>
                             <th className="px-6 py-4">Frequency</th>
                             <th className="px-6 py-4">Qty</th>
+                            <th className="px-6 py-4">Unit Price</th>
                             {isEditing && (
                               <>
                                 <th className="px-6 py-4">Est. Hauls/mo</th>
                                 <th className="px-6 py-4">Est. Tons/mo</th>
                               </>
                             )}
-                            <th className="px-6 py-4">Rate</th>
-                            <th className="px-6 py-4 text-right">Total</th>
+                            <th className="px-6 py-4">Total Price</th>
+                            <th className="px-6 py-4 text-right">Row Total</th>
                             <th className="px-6 py-4"></th>
                           </tr>
                         </thead>
@@ -559,7 +613,7 @@ export default function App() {
                           "divide-y",
                           darkMode ? "divide-slate-800" : "divide-slate-50"
                         )}>
-                          {selectedBid.services.map(service => (
+                          {activeBid.services.map(service => (
                             <tr key={service.id} className={cn(
                               "group transition-colors",
                               darkMode ? "hover:bg-slate-800/30" : "hover:bg-slate-50/50"
@@ -569,10 +623,10 @@ export default function App() {
                                   <select 
                                     value={service.stream}
                                     onChange={(e) => {
-                                      const newServices = selectedBid.services.map(s => 
+                                      const newServices = activeBid.services.map(s => 
                                         s.id === service.id ? { ...s, stream: e.target.value as any } : s
                                       );
-                                      updateBid({ ...selectedBid, services: newServices });
+                                      updateBid({ ...activeBid, services: newServices });
                                     }}
                                     className={cn(
                                       "border-none rounded px-2 py-1 text-[10px] font-black",
@@ -600,10 +654,10 @@ export default function App() {
                                   <select 
                                     value={service.containerSize}
                                     onChange={(e) => {
-                                      const newServices = selectedBid.services.map(s => 
+                                      const newServices = activeBid.services.map(s => 
                                         s.id === service.id ? { ...s, containerSize: e.target.value } : s
                                       );
-                                      updateBid({ ...selectedBid, services: newServices });
+                                      updateBid({ ...activeBid, services: newServices });
                                     }}
                                     className={cn(
                                       "border-none rounded px-2 py-1 text-sm",
@@ -619,10 +673,10 @@ export default function App() {
                                   <select 
                                     value={service.frequency}
                                     onChange={(e) => {
-                                      const newServices = selectedBid.services.map(s => 
+                                      const newServices = activeBid.services.map(s => 
                                         s.id === service.id ? { ...s, frequency: e.target.value } : s
                                       );
-                                      updateBid({ ...selectedBid, services: newServices });
+                                      updateBid({ ...activeBid, services: newServices });
                                     }}
                                     className={cn(
                                       "border-none rounded px-2 py-1 text-sm",
@@ -640,10 +694,10 @@ export default function App() {
                                     min="0"
                                     value={service.quantity}
                                     onChange={(e) => {
-                                      const newServices = selectedBid.services.map(s => 
+                                      const newServices = activeBid.services.map(s => 
                                         s.id === service.id ? { ...s, quantity: parseInt(e.target.value) || 0 } : s
                                       );
-                                      updateBid({ ...selectedBid, services: newServices });
+                                      updateBid({ ...activeBid, services: newServices });
                                     }}
                                     className={cn(
                                       "w-12 border-none rounded px-2 py-1 text-sm",
@@ -651,6 +705,29 @@ export default function App() {
                                     )}
                                   />
                                 ) : service.quantity}
+                              </td>
+                              <td className={cn(
+                                "px-6 py-4 text-sm font-bold",
+                                darkMode ? "text-white" : "text-slate-900"
+                              )}>
+                                {isEditing ? (
+                                  <input 
+                                    type="number" 
+                                    min="0"
+                                    step="0.01"
+                                    value={service.unitPrice}
+                                    onChange={(e) => {
+                                      const newServices = activeBid.services.map(s => 
+                                        s.id === service.id ? { ...s, unitPrice: parseFloat(e.target.value) || 0 } : s
+                                      );
+                                      updateBid({ ...activeBid, services: newServices });
+                                    }}
+                                    className={cn(
+                                      "w-20 border-none rounded px-2 py-1 text-sm",
+                                      darkMode ? "bg-slate-800 text-white" : "bg-slate-100 text-slate-900"
+                                    )}
+                                  />
+                                ) : formatCurrency(service.unitPrice)}
                               </td>
                               {isEditing && (
                                 <>
@@ -661,10 +738,10 @@ export default function App() {
                                       step="0.1"
                                       value={service.estimatedHaulsPerMonth || 0}
                                       onChange={(e) => {
-                                        const newServices = selectedBid.services.map(s => 
+                                        const newServices = activeBid.services.map(s => 
                                           s.id === service.id ? { ...s, estimatedHaulsPerMonth: parseFloat(e.target.value) || 0 } : s
                                         );
-                                        updateBid({ ...selectedBid, services: newServices });
+                                        updateBid({ ...activeBid, services: newServices });
                                       }}
                                       className={cn(
                                         "w-16 border-none rounded px-2 py-1 text-sm",
@@ -679,10 +756,10 @@ export default function App() {
                                       step="0.1"
                                       value={service.estimatedTonsPerMonth || 0}
                                       onChange={(e) => {
-                                        const newServices = selectedBid.services.map(s => 
+                                        const newServices = activeBid.services.map(s => 
                                           s.id === service.id ? { ...s, estimatedTonsPerMonth: parseFloat(e.target.value) || 0 } : s
                                         );
-                                        updateBid({ ...selectedBid, services: newServices });
+                                        updateBid({ ...activeBid, services: newServices });
                                       }}
                                       className={cn(
                                         "w-16 border-none rounded px-2 py-1 text-sm",
@@ -703,10 +780,10 @@ export default function App() {
                                     step="0.01"
                                     value={service.baseRate}
                                     onChange={(e) => {
-                                      const newServices = selectedBid.services.map(s => 
+                                      const newServices = activeBid.services.map(s => 
                                         s.id === service.id ? { ...s, baseRate: parseFloat(e.target.value) || 0 } : s
                                       );
-                                      updateBid({ ...selectedBid, services: newServices });
+                                      updateBid({ ...activeBid, services: newServices });
                                     }}
                                     className={cn(
                                       "w-20 border-none rounded px-2 py-1 text-sm",
@@ -724,8 +801,8 @@ export default function App() {
                               <td className="px-6 py-4 text-right">
                                 <button 
                                   onClick={() => {
-                                    const newServices = selectedBid.services.filter(s => s.id !== service.id);
-                                    updateBid({ ...selectedBid, services: newServices });
+                                    const newServices = activeBid.services.filter(s => s.id !== service.id);
+                                    updateBid({ ...activeBid, services: newServices });
                                   }}
                                   className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
                                 >
@@ -734,9 +811,9 @@ export default function App() {
                               </td>
                             </tr>
                           ))}
-                          {selectedBid.services.length === 0 && (
+                          {activeBid.services.length === 0 && (
                             <tr>
-                              <td colSpan={isEditing ? 9 : 7} className="px-6 py-12 text-center text-slate-400 italic text-sm">
+                              <td colSpan={isEditing ? 10 : 7} className="px-6 py-12 text-center text-slate-400 italic text-sm">
                                 No services added yet. Click "Add Service" to begin.
                               </td>
                             </tr>
@@ -841,40 +918,58 @@ export default function App() {
                               </div>
                               <div className="flex items-center gap-4">
                                 <div className={cn(
-                                  "text-sm font-black",
+                                  "text-sm font-black text-right",
                                   darkMode ? "text-white" : "text-slate-900"
                                 )}>
                                   {isEditing ? (
-                                    <div className="flex items-center gap-1">
-                                      <input 
-                                        type="number" 
-                                        min="0"
-                                        max={fee.type === 'Percentage' ? 100 : undefined}
-                                        step="0.01"
-                                        value={fee.value}
-                                        onChange={(e) => {
-                                          let val = parseFloat(e.target.value) || 0;
-                                          if (fee.type === 'Percentage') val = Math.min(val, 100);
-                                          const newFees = selectedBid.fees.map(f => 
-                                            f.id === fee.id ? { ...f, value: val } : f
-                                          );
-                                          updateBid({ ...selectedBid, fees: newFees });
-                                        }}
-                                        className={cn(
-                                          "w-16 border-none rounded px-2 py-1 text-sm text-right",
-                                          darkMode ? "bg-slate-700 text-white" : "bg-slate-100 text-slate-900"
-                                        )}
-                                      />
-                                      <span>{fee.type === 'Percentage' ? '%' : '$'}</span>
-                                    </div>
+                                    <>
+                                      <div className="flex items-center gap-1">
+                                        <input 
+                                          type="number" 
+                                          min="0"
+                                          max={fee.type === 'Percentage' ? 100 : undefined}
+                                          step="0.01"
+                                          value={fee.value}
+                                          onChange={(e) => {
+                                            let val = parseFloat(e.target.value) || 0;
+                                            if (fee.type === 'Percentage') {
+                                              val = Math.min(val, 100);
+                                            } else {
+                                              val = Math.max(0, val);
+                                            }
+                                            const newFees = activeBid.fees.map(f => 
+                                              f.id === fee.id ? { ...f, value: val } : f
+                                            );
+                                            updateBid({ ...activeBid, fees: newFees });
+                                          }}
+                                          className={cn(
+                                            "w-16 border-none rounded px-2 py-1 text-sm text-right",
+                                            darkMode ? "bg-slate-700 text-white" : "bg-slate-100 text-slate-900",
+                                            (fee.type === 'Percentage' && fee.value >= 90) ? "ring-2 ring-amber-500 bg-amber-500/10" : "",
+                                            (fee.type === 'Percentage' && fee.value >= 100) ? "ring-2 ring-red-500 bg-red-500/10" : "",
+                                            (fee.type !== 'Percentage' && fee.value < 0) ? "ring-2 ring-red-500 text-red-500" : ""
+                                          )}
+                                        />
+                                        <span>{fee.type === 'Percentage' ? '%' : '$'}</span>
+                                      </div>
+                                      {fee.type === 'Percentage' && fee.value >= 100 && (
+                                        <p className="text-[8px] text-red-500 font-bold mt-0.5">Value is maxed at 100%</p>
+                                      )}
+                                      {fee.type === 'Percentage' && fee.value >= 90 && fee.value < 100 && (
+                                        <p className="text-[8px] text-amber-500 font-bold mt-0.5">High percentage warning</p>
+                                      )}
+                                      {(fee.type !== 'Percentage' && fee.value < 0) && (
+                                        <p className="text-[8px] text-red-500 font-bold mt-0.5">Negative value warning</p>
+                                      )}
+                                    </>
                                   ) : (
                                     fee.type === 'Percentage' ? `${fee.value}%` : formatCurrency(fee.value)
                                   )}
                                 </div>
                                 <button 
                                   onClick={() => {
-                                    const newFees = selectedBid.fees.filter(f => f.id !== fee.id);
-                                    updateBid({ ...selectedBid, fees: newFees });
+                                    const newFees = activeBid.fees.filter(f => f.id !== fee.id);
+                                    updateBid({ ...activeBid, fees: newFees });
                                   }}
                                   className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
                                 >
@@ -890,10 +985,10 @@ export default function App() {
                                   placeholder="Fee description..."
                                   value={fee.description || ''}
                                   onChange={(e) => {
-                                    const newFees = selectedBid.fees.map(f => 
+                                    const newFees = activeBid.fees.map(f => 
                                       f.id === fee.id ? { ...f, description: e.target.value } : f
                                     );
-                                    updateBid({ ...selectedBid, fees: newFees });
+                                    updateBid({ ...activeBid, fees: newFees });
                                   }}
                                   className={cn(
                                     "w-full border-none rounded px-2 py-1 text-[10px] min-h-[40px] resize-none",
@@ -910,7 +1005,7 @@ export default function App() {
                             </div>
                           </div>
                         ))}
-                        {selectedBid.fees.length === 0 && (
+                        {activeBid.fees.length === 0 && (
                           <p className="text-center py-8 text-slate-400 italic text-sm">No additional fees.</p>
                         )}
                       </div>
@@ -956,13 +1051,149 @@ export default function App() {
                             />
                             <Bar dataKey="Monthly Total" radius={[4, 4, 0, 0]}>
                               {chartData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.name === selectedBid.haulerName ? '#2563eb' : (darkMode ? '#334155' : '#cbd5e1')} />
+                                <Cell key={`cell-${index}`} fill={entry.name === activeBid.haulerName ? '#2563eb' : (darkMode ? '#334155' : '#cbd5e1')} />
                               ))}
                             </Bar>
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
                     </section>
+                  </div>
+
+                    {/* Metrics Comparison Section */}
+                    {selectedCompareIds.length > 1 && (
+                      <section className={cn(
+                        "rounded-2xl border shadow-sm overflow-hidden transition-colors mb-8",
+                        darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+                      )}>
+                        <div className={cn(
+                          "p-6 border-b",
+                          darkMode ? "bg-slate-800/50 border-slate-800" : "bg-slate-50/50 border-slate-100"
+                        )}>
+                          <h3 className={cn(
+                            "font-bold flex items-center gap-2",
+                            darkMode ? "text-slate-100" : "text-slate-800"
+                          )}>
+                            <TrendingUp className="w-5 h-5 text-emerald-500" />
+                            Key Metrics Comparison
+                          </h3>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className={cn(
+                                "text-[10px] font-bold uppercase tracking-widest border-b",
+                                darkMode ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"
+                              )}>
+                                <th className="px-6 py-4">Metric</th>
+                                {selectedCompareIds.map(id => (
+                                  <th key={id} className="px-6 py-4 text-center">
+                                    {bids.find(b => b.id === id)?.haulerName}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className={cn(
+                              "divide-y",
+                              darkMode ? "divide-slate-800" : "divide-slate-50"
+                            )}>
+                              <tr>
+                                <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Monthly Total</td>
+                                {selectedCompareIds.map(id => {
+                                  const bid = bids.find(b => b.id === id);
+                                  const results = bid ? calculateBidTotals(bid) : null;
+                                  return (
+                                    <td key={id} className="px-6 py-4 text-center font-black text-blue-500">
+                                      {results ? formatCurrency(results.monthlyTotal) : 'N/A'}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                              <tr>
+                                <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Annual Total</td>
+                                {selectedCompareIds.map(id => {
+                                  const bid = bids.find(b => b.id === id);
+                                  const results = bid ? calculateBidTotals(bid) : null;
+                                  return (
+                                    <td key={id} className="px-6 py-4 text-center font-bold">
+                                      {results ? formatCurrency(results.annualTotal) : 'N/A'}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                              <tr>
+                                <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Contract Total</td>
+                                {selectedCompareIds.map(id => {
+                                  const bid = bids.find(b => b.id === id);
+                                  const results = bid ? calculateBidTotals(bid) : null;
+                                  return (
+                                    <td key={id} className="px-6 py-4 text-center font-bold text-slate-600">
+                                      {results ? formatCurrency(results.contractTermTotal) : 'N/A'}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                              <tr>
+                                <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Total Est. Monthly Tonnage</td>
+                                {selectedCompareIds.map(id => {
+                                  const bid = bids.find(b => b.id === id);
+                                  const results = bid ? calculateBidTotals(bid) : null;
+                                  return (
+                                    <td key={id} className="px-6 py-4 text-center font-bold text-slate-600">
+                                      {results ? `${results.totalEstimatedTons} Tons` : 'N/A'}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                              <tr>
+                                <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Total Est. Monthly Hauls</td>
+                                {selectedCompareIds.map(id => {
+                                  const bid = bids.find(b => b.id === id);
+                                  const results = bid ? calculateBidTotals(bid) : null;
+                                  return (
+                                    <td key={id} className="px-6 py-4 text-center font-bold text-slate-600">
+                                      {results ? `${results.totalEstimatedHauls} Hauls` : 'N/A'}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                              {(() => {
+                                const compareResults = bids.filter(b => selectedCompareIds.includes(b.id)).map(b => ({
+                                  id: b.id,
+                                  name: b.haulerName,
+                                  total: calculateBidTotals(b).contractTermTotal
+                                })).sort((a, b) => b.total - a.total);
+                                
+                                if (compareResults.length < 2) return null;
+                                const worst = compareResults[0];
+                                
+                                return (
+                                  <tr>
+                                    <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Contract Savings vs Baseline</td>
+                                    {selectedCompareIds.map(id => {
+                                      const bid = bids.find(b => b.id === id);
+                                      if (!bid) return <td key={id}></td>;
+                                      const total = calculateBidTotals(bid).contractTermTotal;
+                                      const savings = worst.total - total;
+                                      return (
+                                        <td key={id} className="px-6 py-4 text-center">
+                                          <span className={cn(
+                                            "px-2 py-1 rounded text-xs font-bold",
+                                            savings > 0 ? "bg-emerald-100 text-emerald-700" : (savings < 0 ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-500")
+                                          )}>
+                                            {savings > 0 ? `+${formatCurrency(savings)}` : (savings < 0 ? formatCurrency(savings) : 'Baseline')}
+                                          </span>
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                );
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    )}
 
                     {/* Side-by-Side Service Comparison */}
                     {selectedCompareIds.length > 1 && (
@@ -1044,7 +1275,6 @@ export default function App() {
                         </div>
                       </section>
                     )}
-                  </div>
 
                   {/* Fee Breakdown Pie Chart */}
                   <section className={cn(
@@ -1067,10 +1297,10 @@ export default function App() {
                           <PieChart>
                             <Pie
                               data={[
-                                { name: 'Fixed Fees', value: calculateBidTotals(selectedBid).breakdown.fixedFees },
-                                { name: 'Percentage Fees', value: calculateBidTotals(selectedBid).breakdown.percentageFees },
-                                { name: 'Per Haul Fees', value: calculateBidTotals(selectedBid).breakdown.perHaulFees },
-                                { name: 'Per Ton Fees', value: calculateBidTotals(selectedBid).breakdown.perTonFees },
+                                { name: 'Fixed Fees', value: calculateBidTotals(activeBid).breakdown.fixedFees },
+                                { name: 'Percentage Fees', value: calculateBidTotals(activeBid).breakdown.percentageFees },
+                                { name: 'Per Haul Fees', value: calculateBidTotals(activeBid).breakdown.perHaulFees },
+                                { name: 'Per Ton Fees', value: calculateBidTotals(activeBid).breakdown.perTonFees },
                               ].filter(d => d.value > 0)}
                               cx="50%"
                               cy="50%"
@@ -1110,7 +1340,7 @@ export default function App() {
                         )}>
                           <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Fee Efficiency Score</p>
                           {(() => {
-                            const results = calculateBidTotals(selectedBid);
+                            const results = calculateBidTotals(activeBid);
                             const feeRatio = (results.monthlyFees / results.monthlyTotal) * 100;
                             return (
                               <div className="flex items-end justify-between">
@@ -1152,8 +1382,8 @@ export default function App() {
                     </h3>
                     {isEditing ? (
                       <textarea 
-                        value={selectedBid.notes || ''}
-                        onChange={(e) => updateBid({ ...selectedBid, notes: e.target.value })}
+                        value={activeBid.notes || ''}
+                        onChange={(e) => updateBid({ ...activeBid, notes: e.target.value })}
                         placeholder="Add any additional notes about this bid..."
                         className={cn(
                           "w-full min-h-[150px] p-4 rounded-xl border focus:ring-2 focus:ring-blue-500 transition-all",
@@ -1165,8 +1395,8 @@ export default function App() {
                         "p-4 rounded-xl min-h-[100px]",
                         darkMode ? "bg-slate-800/30 text-slate-300" : "bg-slate-50 text-slate-600"
                       )}>
-                        {selectedBid.notes ? (
-                          <p className="whitespace-pre-wrap text-sm leading-relaxed">{selectedBid.notes}</p>
+                        {activeBid.notes ? (
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed">{activeBid.notes}</p>
                         ) : (
                           <p className="text-sm italic opacity-50">No notes provided.</p>
                         )}

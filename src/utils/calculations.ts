@@ -39,7 +39,8 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
       } else if (fee.type === 'Per Ton') {
         monthlyPerTonFees += totalEstimatedTons * val;
       } else if (fee.type === 'Per Service') {
-        monthlyFixedFees += totalServiceQuantity * val;
+        // Updated to use the number of unique service line items
+        monthlyFixedFees += (bid.services.length || 0) * val;
       }
     });
 
@@ -47,8 +48,14 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
     const fuelSurchargePercent = Number(bid.fuelSurchargePercent) || 0;
     const environmentalFeePercent = Number(bid.environmentalFeePercent) || 0;
     
-    const fuelSurcharge = monthlySubtotal * (fuelSurchargePercent / 100);
-    const environmentalFee = monthlySubtotal * (environmentalFeePercent / 100);
+    // Division by zero safety: Ensure percentage calculations are safe
+    const safePercentageMultiplier = (percent: number) => {
+      const p = Number(percent) || 0;
+      return p / 100;
+    };
+    
+    const fuelSurcharge = monthlySubtotal * safePercentageMultiplier(fuelSurchargePercent);
+    const environmentalFee = monthlySubtotal * safePercentageMultiplier(environmentalFeePercent);
     
     monthlyPercentageFees += fuelSurcharge + environmentalFee;
 
@@ -70,11 +77,14 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
       
       contractTermTotal += currentMonthlyTotal * monthsInYear;
       // Apply escalation at the start of each subsequent year
-      currentMonthlyTotal *= (1 + cpiPercent / 100);
+      currentMonthlyTotal *= (1 + safePercentageMultiplier(cpiPercent));
     }
 
     // Final safety check for NaN/Infinity
-    const sanitize = (n: number) => isFinite(n) ? n : 0;
+    const sanitize = (n: number) => {
+      if (isNaN(n) || !isFinite(n)) return 0;
+      return n;
+    };
 
     return {
       monthlySubtotal: sanitize(monthlySubtotal),
@@ -82,6 +92,8 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
       monthlyTotal: sanitize(monthlyTotal),
       annualTotal: sanitize(annualTotal),
       contractTermTotal: sanitize(contractTermTotal),
+      totalEstimatedTons: sanitize(totalEstimatedTons),
+      totalEstimatedHauls: sanitize(totalEstimatedHauls),
       breakdown: {
         services: sanitize(monthlySubtotal),
         fixedFees: sanitize(monthlyFixedFees),
@@ -99,6 +111,8 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
       monthlyTotal: 0,
       annualTotal: 0,
       contractTermTotal: 0,
+      totalEstimatedTons: 0,
+      totalEstimatedHauls: 0,
       breakdown: { 
         services: 0, 
         fixedFees: 0, 

@@ -27,6 +27,7 @@ export interface WasteService {
   frequency: string;
   quantity: number;
   baseRate: number; // Monthly base rate or per-haul rate
+  unitPrice: number; 
   estimatedTonsPerMonth?: number;
   estimatedHaulsPerMonth?: number;
 }
@@ -49,6 +50,8 @@ export interface CalculationResults {
   monthlyTotal: number;
   annualTotal: number;
   contractTermTotal: number;
+  totalEstimatedTons: number;
+  totalEstimatedHauls: number;
   breakdown: {
     services: number;
     fixedFees: number;

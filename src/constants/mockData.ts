@@ -23,6 +23,7 @@ export const INITIAL_BIDS: Bid[] = [
         frequency: '3xw',
         quantity: 1,
         baseRate: 450,
+        unitPrice: 0,
       },
       {
         id: 's2',
@@ -31,6 +32,7 @@ export const INITIAL_BIDS: Bid[] = [
         frequency: '1xw',
         quantity: 1,
         baseRate: 120,
+        unitPrice: 0,
       }
     ],
     fees: [
@@ -53,6 +55,7 @@ export const INITIAL_BIDS: Bid[] = [
         frequency: '3xw',
         quantity: 1,
         baseRate: 410,
+        unitPrice: 0,
       },
       {
         id: 's4',
@@ -61,6 +64,7 @@ export const INITIAL_BIDS: Bid[] = [
         frequency: '1xw',
         quantity: 1,
         baseRate: 105,
+        unitPrice: 0,
       }
     ],
     fees: [
