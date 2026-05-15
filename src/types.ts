@@ -15,7 +15,7 @@ export interface Frequency {
 export interface Fee {
   id: string;
   name: string;
-  type: 'Fixed' | 'Percentage' | 'Per Haul' | 'Per Ton' | 'Per Service';
+  type: 'Fixed' | 'Percentage' | 'Per Haul' | 'Per Ton' | 'Per Service' | 'Per Load';
   value: number;
   description?: string;
 }
@@ -42,6 +42,7 @@ export interface Bid {
   fuelSurchargePercent: number;
   environmentalFeePercent: number;
   notes?: string;
+  comparativeNotes?: string;
 }
 
 export interface CalculationResults {
@@ -58,6 +59,7 @@ export interface CalculationResults {
     percentageFees: number;
     perHaulFees: number;
     perTonFees: number;
+    perLoadFees: number;
     variableFees: number;
   };
 }

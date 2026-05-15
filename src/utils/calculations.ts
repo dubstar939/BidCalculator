@@ -7,6 +7,7 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
     let monthlyPercentageFees = 0;
     let monthlyPerHaulFees = 0;
     let monthlyPerTonFees = 0;
+    let monthlyPerLoadFees = 0;
     let totalEstimatedHauls = 0;
     let totalEstimatedTons = 0;
     let totalServiceQuantity = 0;
@@ -38,6 +39,8 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
         monthlyPerHaulFees += totalEstimatedHauls * val;
       } else if (fee.type === 'Per Ton') {
         monthlyPerTonFees += totalEstimatedTons * val;
+      } else if (fee.type === 'Per Load') {
+        monthlyPerLoadFees += totalEstimatedHauls * val;
       } else if (fee.type === 'Per Service') {
         // Updated to use the number of unique service line items
         monthlyFixedFees += (bid.services.length || 0) * val;
@@ -59,7 +62,7 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
     
     monthlyPercentageFees += fuelSurcharge + environmentalFee;
 
-    const monthlyVariableFees = monthlyPercentageFees + monthlyPerHaulFees + monthlyPerTonFees;
+    const monthlyVariableFees = monthlyPercentageFees + monthlyPerHaulFees + monthlyPerTonFees + monthlyPerLoadFees;
     const monthlyTotal = monthlySubtotal + monthlyFixedFees + monthlyVariableFees;
     
     // Annual total (first 12 months)
@@ -100,6 +103,7 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
         percentageFees: sanitize(monthlyPercentageFees),
         perHaulFees: sanitize(monthlyPerHaulFees),
         perTonFees: sanitize(monthlyPerTonFees),
+        perLoadFees: sanitize(monthlyPerLoadFees),
         variableFees: sanitize(monthlyVariableFees)
       }
     };
@@ -119,6 +123,7 @@ export const calculateBidTotals = (bid: Bid): CalculationResults => {
         percentageFees: 0, 
         perHaulFees: 0, 
         perTonFees: 0, 
+        perLoadFees: 0,
         variableFees: 0 
       }
     };

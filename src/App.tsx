@@ -54,7 +54,8 @@ const FEE_TYPE_TOOLTIPS = {
   'Percentage': 'Calculated as a percentage of the base service subtotal.',
   'Per Haul': 'Charged every time a container is emptied.',
   'Per Ton': 'Charged based on the actual weight of waste collected.',
-  'Per Service': 'Charged for each unique service line item listed in the bid (e.g. 2 different sizes = 2 charges).'
+  'Per Service': 'Charged for each unique service line item listed in the bid (e.g. 2 different sizes = 2 charges).',
+  'Per Load': 'Calculated per estimated load, typically based on haul frequency.'
 };
 
 const TABLE_COLUMN_TOOLTIPS = {
@@ -1022,6 +1023,7 @@ export default function App() {
                                       <option value="Per Haul">Per Haul</option>
                                       <option value="Per Ton">Per Ton</option>
                                       <option value="Per Service">Per Service</option>
+                                      <option value="Per Load">Per Load</option>
                                     </select>
                                   </div>
                                 ) : (
@@ -1507,6 +1509,7 @@ export default function App() {
                                 { name: 'Percentage Fees', value: calculateBidTotals(activeBid).breakdown.percentageFees },
                                 { name: 'Per Haul Fees', value: calculateBidTotals(activeBid).breakdown.perHaulFees },
                                 { name: 'Per Ton Fees', value: calculateBidTotals(activeBid).breakdown.perTonFees },
+                                { name: 'Per Load Fees', value: calculateBidTotals(activeBid).breakdown.perLoadFees },
                               ].filter(d => d.value > 0)}
                               cx="50%"
                               cy="50%"
@@ -1812,6 +1815,35 @@ export default function App() {
                               </div>
                             ))}
                           </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {/* 4. Strategic Insights & Comparative Notes */}
+                <section>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-emerald-500 mb-6 flex items-center gap-2">
+                    <FileText className="w-4 h-4" /> Strategic Insights
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {selectedCompareIds.map(id => {
+                      const bid = bids.find(b => b.id === id)!;
+                      return (
+                        <div key={id} className="border rounded-2xl p-6 bg-slate-50 dark:bg-slate-900 border-emerald-100 dark:border-emerald-900/30">
+                          <h4 className="font-bold text-lg mb-4 pb-2 border-b">{bid.haulerName}</h4>
+                          <textarea 
+                            value={bid.comparativeNotes || ''}
+                            onChange={(e) => {
+                              const newBids = bids.map(b => b.id === id ? { ...b, comparativeNotes: e.target.value } : b);
+                              setBids(newBids);
+                            }}
+                            placeholder="Write comparative notes, strengths, weaknesses..."
+                            className={cn(
+                              "w-full min-h-[120px] p-4 rounded-xl border text-sm resize-none focus:ring-2 focus:ring-emerald-500 transition-all",
+                              darkMode ? "bg-slate-800 border-slate-700 text-slate-100 placeholder-slate-500" : "bg-white border-slate-200 text-slate-900 placeholder-slate-400"
+                            )}
+                          />
                         </div>
                       );
                     })}
