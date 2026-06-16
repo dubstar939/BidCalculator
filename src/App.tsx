@@ -1585,7 +1585,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className="h-[300px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer key={`${chartView}-${selectedBidId}`} width="100%" height="100%">
                           <BarChart 
                             data={chartData}
                             onMouseLeave={() => setHoveredBidId(null)}
@@ -1630,6 +1630,9 @@ export default function App() {
                               dataKey="Display Value" 
                               radius={[6, 6, 0, 0]}
                               onClick={(data) => setSelectedBidId(data.id)}
+                              isAnimationActive={true}
+                              animationDuration={600}
+                              animationEasing="ease-in-out"
                             >
                               {chartData.map((entry, index) => (
                                 <Cell 
@@ -1887,7 +1890,7 @@ export default function App() {
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
                       <div className="h-[300px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer key={activeBid?.id || 'default'} width="100%" height="100%">
                           <PieChart>
                             <Pie
                               data={[
@@ -1903,6 +1906,9 @@ export default function App() {
                               outerRadius={100}
                               paddingAngle={5}
                               dataKey="value"
+                              isAnimationActive={true}
+                              animationDuration={600}
+                              animationEasing="ease-in-out"
                             >
                               {[
                                 '#3b82f6', // blue
