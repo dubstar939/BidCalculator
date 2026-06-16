@@ -17,7 +17,9 @@ import {
   ArrowRightLeft,
   Moon,
   Sun,
-  LineChart as LineChartIcon
+  LineChart as LineChartIcon,
+  MapPin,
+  HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -113,6 +115,13 @@ export default function App() {
   const [chartView, setChartView] = useState<'monthly' | 'annual'>('monthly');
   const [showComparisonView, setShowComparisonView] = useState(false);
 
+  // States for Going Rate Benchmarker & Area Estimator
+  const [benchmarkStream, setBenchmarkStream] = useState<'MSW' | 'REC' | 'OCC'>('MSW');
+  const [benchmarkSize, setBenchmarkSize] = useState('4 Yard');
+  const [benchmarkFrequency, setBenchmarkFrequency] = useState('1x/week');
+  const [benchmarkRegion, setBenchmarkRegion] = useState(1.0); // Default Midwest (Average)
+  const [benchmarkUserPrice, setBenchmarkUserPrice] = useState('');
+
   // Auto-save feature
   React.useEffect(() => {
     const savedBids = localStorage.getItem('bidout_bids');
@@ -200,6 +209,49 @@ export default function App() {
       'Display Value': chartView === 'monthly' ? results.monthlyTotal : results.annualTotal
     }))
   , [bidResults, chartView]);
+
+  const goingRateResult = useMemo(() => {
+    const isRollOff = benchmarkSize.includes('30') || benchmarkSize.includes('40');
+    const yardSize = parseInt(benchmarkSize) || 4;
+    
+    const freqObj = FREQUENCIES.find(f => f.label === benchmarkFrequency) || FREQUENCIES[0];
+    const pickupsPerMonth = freqObj.multiplier;
+    
+    let baseMonthlyCost = 0;
+    
+    if (isRollOff) {
+      // Roll-off model: Monthly Rent + (Cost per Haul * pickups/month)
+      const rent = yardSize === 30 ? 140 : 180;
+      const costPerHaul = benchmarkStream === 'MSW' ? 320 : benchmarkStream === 'REC' ? 265 : 220;
+      baseMonthlyCost = rent + (costPerHaul * pickupsPerMonth);
+    } else {
+      // Front load model: Bin size Rent + (pick rate * size * pickups/month)
+      const rent = yardSize === 2 ? 25 : yardSize === 4 ? 35 : yardSize === 6 ? 45 : 55;
+      const pickRatePerYard = benchmarkStream === 'MSW' ? 11.0 : benchmarkStream === 'REC' ? 8.5 : 7.25;
+      baseMonthlyCost = rent + (pickRatePerYard * yardSize * pickupsPerMonth);
+    }
+    
+    const average = baseMonthlyCost * benchmarkRegion;
+    const low = average * 0.82;
+    const high = average * 1.18;
+    
+    return {
+      average: Number(average.toFixed(2)),
+      low: Number(low.toFixed(2)),
+      high: Number(high.toFixed(2))
+    };
+  }, [benchmarkStream, benchmarkSize, benchmarkFrequency, benchmarkRegion]);
+
+  const handleAutoFillFromActive = () => {
+    if (!activeBid || activeBid.services.length === 0) return;
+    const primaryService = activeBid.services[0];
+    setBenchmarkStream(primaryService.stream);
+    setBenchmarkSize(primaryService.containerSize);
+    setBenchmarkFrequency(primaryService.frequency);
+    // Multiply baseRate * quantity for exact compared subtotal of that service line item
+    const baseCost = (Number(primaryService.baseRate) || 0) * (Number(primaryService.quantity) || 1);
+    setBenchmarkUserPrice(String(baseCost));
+  };
 
   const handleAddBid = () => {
     const newBid: Bid = {
@@ -803,6 +855,227 @@ export default function App() {
               ) : (
                 <p className="text-slate-400 text-sm">Add at least two bids to see savings comparisons.</p>
               )}
+            </section>
+
+            {/* Going Rate Benchmarker & Area Estimator */}
+            <section className={cn(
+              "rounded-2xl border p-6 transition-colors shadow-sm space-y-4",
+              darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+            )}>
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+                  <Calculator className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className={cn(
+                    "text-base font-bold",
+                    darkMode ? "text-slate-100" : "text-slate-800"
+                  )}>Going Rate Benchmarker</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">Evaluate rates with real-world averages</p>
+                </div>
+              </div>
+
+              {activeBid && activeBid.services.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleAutoFillFromActive}
+                  className="w-full py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200/50 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900/30 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  ⚡ Auto-fill from active hauler service
+                </button>
+              )}
+
+              <div className="space-y-3">
+                {/* Waste Stream select */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Stream</label>
+                  <select
+                    value={benchmarkStream}
+                    onChange={(e) => setBenchmarkStream(e.target.value as any)}
+                    className={cn(
+                      "w-full text-xs rounded-xl px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                      darkMode ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-blue-500" : "bg-slate-50 border-slate-200 text-slate-700"
+                    )}
+                  >
+                    <option value="MSW">Solid Waste / MSW</option>
+                    <option value="REC">Recycling / REC</option>
+                    <option value="OCC">Cardboard Only / OCC</option>
+                  </select>
+                </div>
+
+                {/* Grid for Bin Size and Frequency */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Bin Size</label>
+                    <select
+                      value={benchmarkSize}
+                      onChange={(e) => setBenchmarkSize(e.target.value)}
+                      className={cn(
+                        "w-full text-xs rounded-xl px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                        darkMode ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-blue-500" : "bg-slate-50 border-slate-200 text-slate-700"
+                      )}
+                    >
+                      {CONTAINER_SIZES.map((size) => (
+                        <option key={size.id} value={size.size}>{size.size}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Frequency</label>
+                    <select
+                      value={benchmarkFrequency}
+                      onChange={(e) => setBenchmarkFrequency(e.target.value)}
+                      className={cn(
+                        "w-full text-xs rounded-xl px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                        darkMode ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-blue-500" : "bg-slate-50 border-slate-200 text-slate-700"
+                      )}
+                    >
+                      {FREQUENCIES.map((freq) => (
+                        <option key={freq.id} value={freq.label}>{freq.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Region selection */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400" /> Area / Region
+                  </label>
+                  <select
+                    value={benchmarkRegion}
+                    onChange={(e) => setBenchmarkRegion(Number(e.target.value))}
+                    className={cn(
+                      "w-full text-xs rounded-xl px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                      darkMode ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-blue-500" : "bg-slate-50 border-slate-200 text-slate-700"
+                    )}
+                  >
+                    <option value="1.0">Midwest (Average/Standard)</option>
+                    <option value="1.25">Northeast (High Cost/Metro)</option>
+                    <option value="1.35">West Coast (Very High/Regulated)</option>
+                    <option value="0.85">South / Southeast (Lower Cost)</option>
+                    <option value="1.12">Mid-Atlantic & Mountain (Moderate-High)</option>
+                  </select>
+                </div>
+
+                {/* Optional Quoted Price Input */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 font-medium">
+                    Bid Monthly Rate to Compare (Optional)
+                  </label>
+                  <div className="relative rounded-xl shadow-sm">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <span className="text-slate-500 text-xs">$</span>
+                    </div>
+                    <input
+                      type="number"
+                      value={benchmarkUserPrice}
+                      onChange={(e) => setBenchmarkUserPrice(e.target.value)}
+                      placeholder="e.g., 250"
+                      className={cn(
+                        "w-full text-xs rounded-xl pl-6 pr-3 py-2 border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                        darkMode ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-blue-500" : "bg-slate-50 border-slate-200 text-slate-700"
+                      )}
+                    />
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div className="border-t border-slate-100 dark:border-slate-800 my-4" />
+
+                {/* Estimate Result Block */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">BALLPARK AREA AVERAGE:</span>
+                    <span className="text-lg font-black text-blue-600 dark:text-blue-400">
+                      {formatCurrency(goingRateResult.average)}<span className="text-xs font-normal text-slate-500">/mo</span>
+                    </span>
+                  </div>
+
+                  {/* Range Meter */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px] font-bold text-slate-400">
+                      <span>Low: {formatCurrency(goingRateResult.low)}</span>
+                      <span>High: {formatCurrency(goingRateResult.high)}</span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden relative flex">
+                      <div className="h-full bg-emerald-500/20 w-[33%]" />
+                      <div className="h-full bg-blue-500/20 w-[34%] border-x border-white/10" />
+                      <div className="h-full bg-amber-500/20 w-[33%]" />
+
+                      {/* Indicator for entered user bid rate */}
+                      {(() => {
+                        const userRate = Number(benchmarkUserPrice);
+                        if (!userRate || isNaN(userRate)) return null;
+                        
+                        // Calculate percentage on the slider from low to high bounds
+                        const totalRange = goingRateResult.high - goingRateResult.low || 1;
+                        let pct = ((userRate - goingRateResult.low) / totalRange) * 100;
+                        pct = Math.max(0, Math.min(100, pct)); // clip at 0 - 100
+                        
+                        return (
+                          <div 
+                            className="absolute top-0 bottom-0 w-1 bg-red-600 dark:bg-red-400 shadow cursor-pointer z-10"
+                            style={{ left: `${pct}%` }}
+                            title={`Your price: ${formatCurrency(userRate)}`}
+                          />
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Human-friendly assessment message if price is entered */}
+                  {(() => {
+                    const userRate = Number(benchmarkUserPrice);
+                    if (!userRate || isNaN(userRate)) {
+                      return (
+                        <div className="bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 p-2.5 rounded-xl text-[11px] text-slate-500 flex gap-2">
+                          <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+                          <span>Enter or auto-fill a quote rate above to compare it directly to area averages.</span>
+                        </div>
+                      );
+                    }
+
+                    let badgeColor = "bg-neutral-100 text-neutral-800 dark:bg-neutral-900/40 dark:text-neutral-400";
+                    let badgeLabel = "Medium";
+                    let cardColor = "bg-slate-50 dark:bg-slate-800/30 border-slate-200 dark:border-slate-800/60";
+                    let description = "";
+
+                    const pctDiff = Math.round(((userRate - goingRateResult.average) / goingRateResult.average) * 100);
+
+                    if (userRate < goingRateResult.low) {
+                      badgeColor = "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/30";
+                      badgeLabel = "💎 EXCEPTIONAL DEAL";
+                      cardColor = "bg-emerald-500/5 dark:bg-emerald-950/10 border-emerald-500/20";
+                      description = `Incredible rate! This price is ${Math.abs(pctDiff)}% below the going area average of ${formatCurrency(goingRateResult.average)}. Excellent job negotiating.`;
+                    } else if (userRate >= goingRateResult.low && userRate <= goingRateResult.high) {
+                      badgeColor = "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-200/30 dark:border-blue-900/20";
+                      badgeLabel = "✅ FAIR MARKET RATE";
+                      cardColor = "bg-blue-500/5 dark:bg-blue-950/5 border-blue-500/10";
+                      description = `This quote is within fair market range (within standard deviations of the ${formatCurrency(goingRateResult.average)} average). Ready to approve.`;
+                    } else {
+                      badgeColor = "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30";
+                      badgeLabel = "⚠️ POTENTIAL OVERPAY";
+                      cardColor = "bg-rose-500/5 dark:bg-rose-950/10 border-rose-500/20";
+                      description = `Heads up! This quote is ${pctDiff}% above the local average of ${formatCurrency(goingRateResult.average)}. We highly recommend asking the hauler to drop their rates by at least $${(userRate - goingRateResult.average).toFixed(0)} to bring this closer to market standard.`;
+                    }
+
+                    return (
+                      <div className={cn("p-3 rounded-xl border space-y-2 text-xs", cardColor)}>
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Analysis</span>
+                          <span className={cn("px-2 py-0.5 rounded text-[9px] font-black tracking-wider uppercase", badgeColor)}>
+                            {badgeLabel}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-semibold">
+                          {description}
+                        </p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
             </section>
           </div>
 
