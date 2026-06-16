@@ -16,7 +16,8 @@ import {
   FileText,
   ArrowRightLeft,
   Moon,
-  Sun
+  Sun,
+  LineChart as LineChartIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -30,8 +31,11 @@ import {
   Tooltip, 
   Legend, 
   ResponsiveContainer,
-  Cell
+  Cell,
+  LineChart,
+  Line
 } from 'recharts';
+import { jsPDF } from 'jspdf';
 import { 
   Bid, 
   WasteService, 
@@ -68,6 +72,33 @@ const TABLE_COLUMN_TOOLTIPS = {
   'Est. Tons/mo': 'The projected actual weight of waste collected per month for this service.',
   'Total Price': 'The monthly base cost before additional fees.',
   'Row Total': 'The total monthly cost including all estimated haul and ton charges for this service.'
+};
+
+const getFeeMonthlyCost = (fee: Fee, bid: Bid) => {
+  const subtotal = bid.services.reduce((acc, s) => acc + (Number(s.baseRate) || 0) * (Number(s.quantity) || 0), 0);
+  const totalHauls = bid.services.reduce((acc, s) => acc + (Number(s.estimatedHaulsPerMonth) || 0) * (Number(s.quantity) || 0), 0);
+  const totalTons = bid.services.reduce((acc, s) => acc + (Number(s.estimatedTonsPerMonth) || 0) * (Number(s.quantity) || 0), 0);
+  
+  const val = Number(fee.value) || 0;
+  if (fee.type === 'Fixed') {
+    return val;
+  } else if (fee.type === 'Percentage') {
+    return subtotal * (val / 100);
+  } else if (fee.type === 'Per Haul' || fee.type === 'Per Load') {
+    return totalHauls * val;
+  } else if (fee.type === 'Per Ton') {
+    return totalTons * val;
+  } else if (fee.type === 'Per Service') {
+    return (bid.services.length || 0) * val;
+  }
+  return 0;
+};
+
+const isFeeExceeding10Percent = (fee: Fee, bid: Bid) => {
+  const subtotal = bid.services.reduce((acc, s) => acc + (Number(s.baseRate) || 0) * (Number(s.quantity) || 0), 0);
+  if (subtotal <= 0) return false;
+  const cost = getFeeMonthlyCost(fee, bid);
+  return cost > subtotal * 0.1;
 };
 
 export default function App() {
@@ -127,6 +158,31 @@ export default function App() {
 
   const activeBid = isEditing ? editingBid : selectedBid;
   const activeResults = useMemo(() => activeBid ? calculateBidTotals(activeBid) : null, [activeBid]);
+
+  const cpiProjectionData = useMemo(() => {
+    if (!activeBid) return [];
+    const results = calculateBidTotals(activeBid);
+    const data = [];
+    const totalMonths = Math.max(12, Number(activeBid.contractTermMonths) || 36);
+    const cpi = Number(activeBid.cpiEscalationPercent) || 0;
+    const initialMonthly = results.monthlyTotal;
+
+    for (let month = 1; month <= totalMonths; month++) {
+      const yearIndex = Math.floor((month - 1) / 12);
+      const escalatedMonthlyCost = initialMonthly * Math.pow(1 + cpi / 100, yearIndex);
+      // Cumulative escalated cost
+      let prevCumulative = month > 1 ? data[month - 2].cumulativeCost : 0;
+      const cumulativeCost = prevCumulative + escalatedMonthlyCost;
+
+      data.push({
+        monthLabel: `Mo ${month}`,
+        month,
+        monthlyCost: Number(escalatedMonthlyCost.toFixed(2)),
+        cumulativeCost: Number(cumulativeCost.toFixed(2)),
+      });
+    }
+    return data;
+  }, [activeBid]);
 
   const bidResults = useMemo(() => 
     bids.map(bid => ({
@@ -249,6 +305,329 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleExportPDF = () => {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    let y = 20;
+    const pageHeight = doc.internal.pageSize.height;
+    const pageWidth = doc.internal.pageSize.width;
+
+    const checkPageBreak = (needed: number) => {
+      if (y + needed > pageHeight - 20) {
+        doc.addPage();
+        y = 20;
+        drawHeader();
+      }
+    };
+
+    const drawHeader = () => {
+      // Elegant, modern mini-header for pages 2+
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184); // Slate-400
+      doc.text("Haululator by 939PRO STUDIO • Bid Comparison Report", 20, 10);
+      doc.setDrawColor(226, 232, 240); // Slate-200
+      doc.setLineWidth(0.2);
+      doc.line(20, 12, pageWidth - 20, 12);
+    };
+
+    // Title Block
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.setTextColor(15, 23, 42); // Slate-900
+    doc.text("HAULULATOR COMPREHENSIVE REPORT", 20, y);
+    y += 6;
+
+    doc.setFont('Helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(71, 85, 105); // Slate-600
+    doc.text(`Generated on: ${new Date().toLocaleDateString()} • Client Analysis Report`, 20, y);
+    y += 6;
+
+    // Divider line
+    doc.setDrawColor(37, 99, 235); // Blue-600
+    doc.setLineWidth(1);
+    doc.line(20, y, pageWidth - 20, y);
+    y += 10;
+
+    // Selected Haulers Summary Card
+    checkPageBreak(50);
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(25, 30, 40);
+    doc.text("1. Selected Haulers Summary", 20, y);
+    y += 6;
+
+    selectedCompareIds.forEach((id) => {
+      const bid = bids.find(b => b.id === id);
+      if (!bid) return;
+      const res = calculateBidTotals(bid);
+
+      checkPageBreak(35);
+      // Draw card background
+      doc.setFillColor(248, 250, 252); // Slate-50
+      doc.roundedRect(20, y, pageWidth - 40, 28, 2, 2, 'F');
+
+      // Left border highlight
+      doc.setFillColor(37, 99, 235); // Blue-600
+      doc.rect(20, y, 2, 28, 'F');
+
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${bid.haulerName}`, 26, y + 6);
+
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Term: ${bid.contractTermMonths} months`, 26, y + 12);
+      doc.text(`CPI Escalation: ${bid.cpiEscalationPercent}% / year`, 26, y + 17);
+      doc.text(`Fuel Surcharge: ${bid.fuelSurchargePercent}%`, 26, y + 22);
+
+      // Costs right aligned
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`Monthly Total: ${formatCurrency(res.monthlyTotal)}`, pageWidth - 26, y + 6, { align: 'right' });
+      doc.text(`Annual Total: ${formatCurrency(res.annualTotal)}`, pageWidth - 26, y + 12, { align: 'right' });
+      doc.text(`Contract Term Total: ${formatCurrency(res.contractTermTotal)}`, pageWidth - 26, y + 17, { align: 'right' });
+
+      y += 34;
+    });
+
+    // Financial Metric Comparison Table
+    checkPageBreak(60);
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(25, 30, 40);
+    doc.text("2. Comparative Financial Analysis", 20, y);
+    y += 6;
+
+    // Let's draw table headers
+    const colWidth = (pageWidth - 80) / selectedCompareIds.length;
+    doc.setFillColor(226, 232, 240); // Slate-200
+    doc.rect(20, y, pageWidth - 40, 8, 'F');
+
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Financial Metric", 24, y + 5.5);
+
+    selectedCompareIds.forEach((id, colIdx) => {
+      const bid = bids.find(b => b.id === id);
+      if (bid) {
+        doc.text(bid.haulerName, 82 + colIdx * colWidth, y + 5.5, { align: 'center', maxWidth: colWidth - 4 });
+      }
+    });
+    y += 8;
+
+    // Row definition
+    const rows = [
+      { label: 'Monthly Subtotal', key: 'monthlySubtotal' },
+      { label: 'Monthly Surcharges & Fees', key: 'monthlyFees' },
+      { label: 'Monthly Total', key: 'monthlyTotal', boldRow: true },
+      { label: 'Annual Total', key: 'annualTotal' },
+      { label: 'Contract Term Total', key: 'contractTermTotal', boldRow: true },
+      { label: 'Est. Monthly Tonnage', key: 'totalEstimatedTons', suffix: ' Tons' },
+      { label: 'Est. Monthly Hauls', key: 'totalEstimatedHauls', suffix: ' Hauls' }
+    ];
+
+    rows.forEach((row, rowIdx) => {
+      checkPageBreak(12);
+      // Alternate row bg
+      if (rowIdx % 2 === 1) {
+        doc.setFillColor(248, 250, 252); // Slate-50
+        doc.rect(20, y, pageWidth - 40, 8, 'F');
+      }
+      // Draw bottom border
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.1);
+      doc.line(20, y + 8, pageWidth - 20, y + 8);
+
+      doc.setFont('Helvetica', row.boldRow ? 'bold' : 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(15, 23, 42);
+      doc.text(row.label, 24, y + 5.5);
+
+      selectedCompareIds.forEach((id, colIdx) => {
+        const bid = bids.find(b => b.id === id);
+        if (bid) {
+          const res = calculateBidTotals(bid);
+          const val = res[row.key as keyof typeof res];
+          const displayVal = typeof val === 'number' ? (row.suffix ? `${val}${row.suffix}` : formatCurrency(val)) : val;
+          doc.text(String(displayVal), 82 + colIdx * colWidth, y + 5.5, { align: 'center' });
+        }
+      });
+
+      y += 8;
+    });
+    y += 6;
+
+    // Services breakdown block
+    checkPageBreak(50);
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(25, 30, 40);
+    doc.text("3. Service & Stream Details", 20, y);
+    y += 6;
+
+    selectedCompareIds.forEach((id) => {
+      const bid = bids.find(b => b.id === id);
+      if (!bid) return;
+
+      checkPageBreak(30 + bid.services.length * 8);
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${bid.haulerName} Services:`, 20, y + 4);
+      y += 6;
+
+      // Table header for services
+      doc.setFillColor(241, 245, 249); // Slate-100
+      doc.rect(20, y, pageWidth - 40, 6, 'F');
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.text("Waste Stream", 24, y + 4);
+      doc.text("Container Size / Qty", 65, y + 4);
+      doc.text("Frequency", 110, y + 4);
+      doc.text("Est. Monthly Hauls / Tons", 140, y + 4);
+      doc.text("Base Rate", pageWidth - 24, y + 4, { align: 'right' });
+      y += 6;
+
+      bid.services.forEach((s) => {
+        doc.setFont('Helvetica', 'normal');
+        doc.setFontSize(7.5);
+        doc.text(String(s.stream), 24, y + 4);
+        doc.text(`${s.quantity}x ${s.containerSize}`, 65, y + 4);
+        doc.text(String(s.frequency), 110, y + 4);
+        doc.text(`${s.estimatedHaulsPerMonth} hauls / ${s.estimatedTonsPerMonth} tons`, 140, y + 4);
+        doc.text(formatCurrency(s.baseRate), pageWidth - 24, y + 4, { align: 'right' });
+        y += 6;
+      });
+
+      if (bid.services.length === 0) {
+        doc.setFont('Helvetica', 'italic');
+        doc.setFontSize(7.5);
+        doc.text("No services specified", 24, y + 4);
+        y += 6;
+      }
+      y += 4;
+    });
+
+    // Additional Fees Block
+    checkPageBreak(50);
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(25, 30, 40);
+    doc.text("4. Surcharges & Additional Fees Breakdown", 20, y);
+    y += 6;
+
+    selectedCompareIds.forEach((id) => {
+      const bid = bids.find(b => b.id === id);
+      if (!bid) return;
+
+      checkPageBreak(35 + bid.fees.length * 8);
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${bid.haulerName} Fees:`, 20, y + 4);
+      y += 6;
+
+      // Print baseline surcharges
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Fuel Surcharge: ${bid.fuelSurchargePercent}%   •   Environmental Surcharge: ${bid.environmentalFeePercent}%`, 24, y + 3);
+      y += 6;
+
+      if (bid.fees.length > 0) {
+        doc.setFillColor(241, 245, 249);
+        doc.rect(20, y, pageWidth - 40, 6, 'F');
+        doc.setFont('Helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Fee Name", 24, y + 4.5);
+        doc.text("Fee Type", 70, y + 4.5);
+        doc.text("Value", 120, y + 4.5);
+        doc.text("Exceeds 10% Base Services?", pageWidth - 24, y + 4.5, { align: 'right' });
+        y += 6;
+
+        bid.fees.forEach((f) => {
+          const valText = f.type === 'Percentage' ? `${f.value}%` : formatCurrency(f.value);
+          doc.setFont('Helvetica', 'normal');
+          doc.setFontSize(7.5);
+          doc.text(f.name, 24, y + 4);
+          doc.text(f.type, 70, y + 4);
+          doc.text(valText, 120, y + 4);
+
+          const highFee = isFeeExceeding10Percent(f, bid);
+          if (highFee) {
+            doc.setFont('Helvetica', 'bold');
+            doc.setTextColor(185, 28, 28); // red-700
+            doc.text("YES - High Fee Warning", pageWidth - 24, y + 4, { align: 'right' });
+          } else {
+            doc.setTextColor(71, 85, 105);
+            doc.text("No", pageWidth - 24, y + 4, { align: 'right' });
+          }
+          y += 6;
+          doc.setTextColor(15, 23, 42); // Restore
+        });
+      } else {
+        doc.setFont('Helvetica', 'italic');
+        doc.setFontSize(8);
+        doc.text("No custom additional fees defined.", 24, y + 3);
+        y += 6;
+      }
+      y += 4;
+    });
+
+    // Comparative notes block
+    checkPageBreak(50);
+    doc.setFont('Helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(25, 30, 40);
+    doc.text("5. Strategic Insights & Comparative Notes", 20, y);
+    y += 6;
+
+    selectedCompareIds.forEach((id) => {
+      const bid = bids.find(b => b.id === id);
+      if (!bid) return;
+
+      const notes = bid.comparativeNotes || "No comparative notes entered.";
+      const splitNotes = doc.splitTextToSize(notes, pageWidth - 50);
+
+      checkPageBreak(25 + splitNotes.length * 4.5);
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.text(`${bid.haulerName} Insights:`, 20, y + 4);
+      y += 7;
+
+      doc.setFillColor(248, 250, 252); // Slate-50
+      doc.roundedRect(20, y, pageWidth - 40, splitNotes.length * 5 + 6, 1, 1, 'F');
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(51, 65, 85);
+      doc.text(splitNotes, 24, y + 5);
+      y += splitNotes.length * 5 + 12;
+    });
+
+    // Page Numbers Footer
+    const totalPages = (doc.internal as any).pages.length - 1;
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFont('Helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+    }
+
+    doc.save(`Haululator_Bid_Comparison_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   return (
@@ -1028,10 +1407,17 @@ export default function App() {
                                   </div>
                                 ) : (
                                   <>
-                                    <p className={cn(
-                                      "text-sm font-bold",
-                                      darkMode ? "text-slate-100" : "text-slate-800"
-                                    )}>{fee.name}</p>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className={cn(
+                                        "text-sm font-bold",
+                                        darkMode ? "text-slate-100" : "text-slate-800"
+                                      )}>{fee.name}</p>
+                                      {isFeeExceeding10Percent(fee, selectedBid) && (
+                                        <span className="inline-flex items-center gap-1 text-[9px] font-black bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400 px-1.5 py-0.5 rounded border border-red-200 dark:border-red-900/30">
+                                          ⚠️ High Fee (&gt;10% of base)
+                                        </span>
+                                      )}
+                                    </div>
                                     <div className="relative group/tooltip">
                                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider cursor-help">{fee.type}</p>
                                       <div className="absolute bottom-full left-0 mb-2 w-48 p-2 bg-slate-800 text-white text-[10px] rounded shadow-xl opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-20">
@@ -1577,6 +1963,118 @@ export default function App() {
                     </div>
                   </section>
 
+                  {/* Price Projection Section */}
+                  <section className={cn(
+                    "rounded-2xl border shadow-sm p-8 transition-colors",
+                    darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+                  )}>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-2">
+                      <div>
+                        <h3 className={cn(
+                          "text-xl font-bold flex items-center gap-2",
+                          darkMode ? "text-slate-100" : "text-slate-800"
+                        )}>
+                          <LineChartIcon className="w-6 h-6 text-blue-500" />
+                          Price Projection & Escalation Model
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Estimated monthly spend over the {activeBid.contractTermMonths}-month contract term with {activeBid.cpiEscalationPercent}% annual CPI escalation.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+                      {/* Left: Summary Metrics */}
+                      <div className="space-y-4">
+                        <div className={cn(
+                          "p-4 rounded-xl border",
+                          darkMode ? "bg-slate-800/40 border-slate-700" : "bg-slate-50 border-slate-100"
+                        )}>
+                          <span className="text-xs text-slate-400 font-bold uppercase tracking-wider block mb-1">Contract Term Cost</span>
+                          <span className="text-3xl font-black text-blue-600 block">
+                            {formatCurrency(calculateBidTotals(activeBid).contractTermTotal)}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            Includes escalated monthly rates
+                          </span>
+                        </div>
+
+                        <div className={cn(
+                          "p-4 rounded-xl border",
+                          darkMode ? "bg-slate-800/40 border-slate-700" : "bg-slate-50 border-slate-100"
+                        )}>
+                          <span className="text-xs text-slate-400 font-bold uppercase tracking-wider block mb-1">Escalation Cost Impact</span>
+                          {(() => {
+                            const results = calculateBidTotals(activeBid);
+                            const unescalatedTotal = results.monthlyTotal * (Number(activeBid.contractTermMonths) || 12);
+                            const impact = results.contractTermTotal - unescalatedTotal;
+                            return (
+                              <>
+                                <span className={cn(
+                                  "text-2xl font-black block",
+                                  impact > 0 ? "text-amber-500" : "text-slate-500"
+                                )}>
+                                  +{formatCurrency(impact)}
+                                </span>
+                                <span className="text-xs text-slate-500">
+                                  Total cost added by the {activeBid.cpiEscalationPercent}% CPI rate
+                                </span>
+                              </>
+                            );
+                          })()}
+                        </div>
+
+                        <div className="bg-blue-50/20 dark:bg-blue-950/10 p-4 rounded-xl border border-blue-500/10">
+                          <h4 className="text-xs font-bold uppercase tracking-wide text-blue-500 mb-2 flex items-center gap-1.5">
+                            <Info className="w-3.5 h-3.5" /> Modeling Insights
+                          </h4>
+                          <p className="text-xs text-slate-500 leading-relaxed">
+                            Annual escalations are applied compounding at month 13, 25, 37, 49, and so forth. Term length is modeled at {activeBid.contractTermMonths} months.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Right 2/3: Line Chart */}
+                      <div className="lg:col-span-2 h-[300px] w-full min-h-[300px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={cpiProjectionData}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#1e293b" : "#f1f5f9"} />
+                            <XAxis 
+                              dataKey="monthLabel" 
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: darkMode ? '#94a3b8' : '#64748b', fontSize: 10, fontWeight: 600 }}
+                            />
+                            <YAxis 
+                              axisLine={false}
+                              tickLine={false}
+                              tick={{ fill: darkMode ? '#94a3b8' : '#64748b', fontSize: 10, fontWeight: 600 }}
+                              tickFormatter={(value) => `$${value}`}
+                            />
+                            <Tooltip 
+                              formatter={(value: number) => [formatCurrency(value), 'Monthly Cost']}
+                              contentStyle={{ 
+                                borderRadius: '12px', 
+                                border: 'none', 
+                                boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                                backgroundColor: darkMode ? '#0f172a' : '#ffffff',
+                                color: darkMode ? '#f8fafc' : '#0f172a'
+                              }}
+                            />
+                            <Line 
+                              type="stepAfter" 
+                              dataKey="monthlyCost" 
+                              stroke="#3b82f6" 
+                              strokeWidth={3} 
+                              dot={{ r: 3, fill: '#3b82f6', strokeWidth: 0 }}
+                              activeDot={{ r: 6 }} 
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </section>
+
                   {/* Notes Section */}
                   <section className={cn(
                     "rounded-2xl border shadow-sm p-8 transition-colors",
@@ -1670,19 +2168,27 @@ export default function App() {
                   </button>
                   <h2 className="text-2xl font-black">Detailed Bid Comparison</h2>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Selected Bids:</span>
-                  <div className="flex -space-x-2">
-                    {selectedCompareIds.map((id, i) => (
-                      <div 
-                        key={id}
-                        className="w-8 h-8 rounded-full border-2 border-white dark:border-slate-950 bg-blue-500 flex items-center justify-center text-[10px] font-bold text-white shadow-sm"
-                        style={{ zIndex: 10 - i }}
-                      >
-                        {bids.find(b => b.id === id)?.haulerName.charAt(0)}
-                      </div>
-                    ))}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4 md:gap-6">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Selected Bids:</span>
+                    <div className="flex -space-x-2">
+                      {selectedCompareIds.map((id, i) => (
+                        <div 
+                          key={id}
+                          className="w-8 h-8 rounded-full border-2 border-white dark:border-slate-950 bg-blue-500 flex items-center justify-center text-[10px] font-bold text-white shadow-sm"
+                          style={{ zIndex: 10 - i }}
+                        >
+                          {bids.find(b => b.id === id)?.haulerName.charAt(0)}
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                  <button
+                    onClick={handleExportPDF}
+                    className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black uppercase tracking-widest px-4 py-2.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" /> Export Full Comparison (PDF)
+                  </button>
                 </div>
               </div>
 
@@ -1806,7 +2312,14 @@ export default function App() {
                             {bid.fees.map((f, fi) => (
                               <div key={fi} className="bg-white dark:bg-slate-800 p-3 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 flex justify-between items-center capitalize">
                                 <div className="flex flex-col">
-                                  <span className="font-bold text-slate-800 dark:text-slate-200">{f.name}</span>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-bold text-slate-800 dark:text-slate-200">{f.name}</span>
+                                    {isFeeExceeding10Percent(f, bid) && (
+                                      <span className="text-[8px] font-black bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400 px-1.5 py-0.5 rounded border border-red-200 dark:border-red-900/30">
+                                        ⚠️ &gt;10% Base
+                                      </span>
+                                    )}
+                                  </div>
                                   <span className="text-[9px] text-slate-400 font-bold uppercase">{f.type}</span>
                                 </div>
                                 <span className="font-black text-amber-600">
