@@ -121,6 +121,15 @@ export default function App() {
   const [benchmarkFrequency, setBenchmarkFrequency] = useState('1x/week');
   const [benchmarkRegion, setBenchmarkRegion] = useState(1.0); // Default Midwest (Average)
   const [benchmarkUserPrice, setBenchmarkUserPrice] = useState('');
+  const [pinnedBenchmark, setPinnedBenchmark] = useState<{
+    stream: 'MSW' | 'REC' | 'OCC';
+    size: string;
+    frequency: string;
+    average: number;
+    low: number;
+    high: number;
+    regionFactor: number;
+  } | null>(null);
 
   // Auto-save feature
   React.useEffect(() => {
@@ -251,6 +260,22 @@ export default function App() {
     // Multiply baseRate * quantity for exact compared subtotal of that service line item
     const baseCost = (Number(primaryService.baseRate) || 0) * (Number(primaryService.quantity) || 1);
     setBenchmarkUserPrice(String(baseCost));
+  };
+
+  const handlePinBenchmark = () => {
+    setPinnedBenchmark({
+      stream: benchmarkStream,
+      size: benchmarkSize,
+      frequency: benchmarkFrequency,
+      average: goingRateResult.average,
+      low: goingRateResult.low,
+      high: goingRateResult.high,
+      regionFactor: benchmarkRegion
+    });
+  };
+
+  const handleClearBenchmark = () => {
+    setPinnedBenchmark(null);
   };
 
   const handleAddBid = () => {
@@ -1074,6 +1099,31 @@ export default function App() {
                       </div>
                     );
                   })()}
+
+                  {/* Pin to Comparison Option */}
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 mt-2">
+                    {pinnedBenchmark && 
+                     pinnedBenchmark.stream === benchmarkStream && 
+                     pinnedBenchmark.size === benchmarkSize && 
+                     pinnedBenchmark.frequency === benchmarkFrequency && 
+                     pinnedBenchmark.regionFactor === benchmarkRegion ? (
+                      <button
+                        type="button"
+                        onClick={handleClearBenchmark}
+                        className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-200/50 dark:border-amber-900/30 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        📌 Benchmark Pinned (Click to Unpin)
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handlePinBenchmark}
+                        className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                      >
+                        📌 Pin Active Benchmark to Comparison
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </section>
@@ -2027,6 +2077,74 @@ export default function App() {
                                   );
                                 })}
                               </tr>
+                              {pinnedBenchmark && (
+                                <>
+                                  <tr className="bg-blue-50/20 dark:bg-blue-950/10">
+                                    <td className="px-6 py-4 text-xs font-bold text-blue-600 dark:text-blue-400">
+                                      <div>Ballpark Average</div>
+                                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal normal-case leading-tight">
+                                        {pinnedBenchmark.size} {pinnedBenchmark.stream} @ {pinnedBenchmark.frequency}
+                                      </div>
+                                    </td>
+                                    {selectedCompareIds.map(id => {
+                                      return (
+                                        <td key={id} className="px-6 py-4 text-center font-bold text-blue-600 dark:text-blue-400">
+                                          {formatCurrency(pinnedBenchmark.average)}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                  <tr>
+                                    <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                                      Your Cost (For Service above)
+                                    </td>
+                                    {selectedCompareIds.map(id => {
+                                      const bid = bids.find(b => b.id === id);
+                                      const match = bid?.services.find(s => 
+                                        s.stream === pinnedBenchmark.stream && 
+                                        s.containerSize === pinnedBenchmark.size && 
+                                        s.frequency === pinnedBenchmark.frequency
+                                      );
+                                      return (
+                                        <td key={id} className="px-6 py-4 text-center font-bold text-slate-700 dark:text-slate-200">
+                                          {match ? formatCurrency(match.baseRate) : <span className="text-slate-400 font-normal">N/A</span>}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                  <tr>
+                                    <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
+                                      Variance % vs Benchmark
+                                    </td>
+                                    {selectedCompareIds.map(id => {
+                                      const bid = bids.find(b => b.id === id);
+                                      const match = bid?.services.find(s => 
+                                        s.stream === pinnedBenchmark.stream && 
+                                        s.containerSize === pinnedBenchmark.size && 
+                                        s.frequency === pinnedBenchmark.frequency
+                                      );
+                                      if (!match) return <td key={id} className="px-6 py-4 text-center text-xs text-slate-400">—</td>;
+                                      
+                                      const pctDiff = Math.round(((match.baseRate - pinnedBenchmark.average) / pinnedBenchmark.average) * 100);
+                                      const isBetter = pctDiff <= 0;
+                                      
+                                      return (
+                                        <td key={id} className="px-6 py-4 text-center">
+                                          <span className={cn(
+                                            "inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-black tracking-wider uppercase",
+                                            isBetter 
+                                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/20" 
+                                              : "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-200/20"
+                                          )}>
+                                            {isBetter ? '💎 ' : '⚠️ '}
+                                            {pctDiff > 0 ? `+${pctDiff}%` : `${pctDiff}%`}
+                                          </span>
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                </>
+                              )}
                               {(() => {
                                 const compareResults = bids.filter(b => selectedCompareIds.includes(b.id)).map(b => ({
                                   id: b.id,
@@ -2518,6 +2636,72 @@ export default function App() {
                             })}
                           </tr>
                         ))}
+                        {pinnedBenchmark && (
+                          <>
+                            <tr className="bg-blue-50/20 dark:bg-blue-950/10">
+                              <td className="p-4 border font-bold text-sm text-blue-600 dark:text-blue-400">
+                                <div>Market Ballpark Avg</div>
+                                <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal normal-case mt-0.5 leading-tight">
+                                  {pinnedBenchmark.size} {pinnedBenchmark.stream} @ {pinnedBenchmark.frequency}
+                                </div>
+                              </td>
+                              {selectedCompareIds.map(id => (
+                                <td key={id} className="p-4 border text-center font-bold text-blue-600 dark:text-blue-400">
+                                  {formatCurrency(pinnedBenchmark.average)}
+                                </td>
+                              ))}
+                            </tr>
+                            <tr>
+                              <td className="p-4 border font-bold text-sm text-slate-700 dark:text-slate-200">
+                                Your Cost for Service
+                              </td>
+                              {selectedCompareIds.map(id => {
+                                const bid = bids.find(b => b.id === id);
+                                const match = bid?.services.find(s => 
+                                  s.stream === pinnedBenchmark.stream && 
+                                  s.containerSize === pinnedBenchmark.size && 
+                                  s.frequency === pinnedBenchmark.frequency
+                                );
+                                return (
+                                  <td key={id} className="p-4 border text-center font-bold text-slate-700 dark:text-slate-200">
+                                    {match ? formatCurrency(match.baseRate) : <span className="text-slate-400 font-normal">N/A</span>}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                            <tr>
+                              <td className="p-4 border font-bold text-sm text-slate-700 dark:text-slate-200">
+                                Variance % vs Benchmark
+                              </td>
+                              {selectedCompareIds.map(id => {
+                                const bid = bids.find(b => b.id === id);
+                                const match = bid?.services.find(s => 
+                                  s.stream === pinnedBenchmark.stream && 
+                                  s.containerSize === pinnedBenchmark.size && 
+                                  s.frequency === pinnedBenchmark.frequency
+                                );
+                                if (!match) return <td key={id} className="p-4 border text-center text-xs text-slate-400">—</td>;
+                                
+                                const pctDiff = Math.round(((match.baseRate - pinnedBenchmark.average) / pinnedBenchmark.average) * 100);
+                                const isBetter = pctDiff <= 0;
+                                
+                                return (
+                                  <td key={id} className="p-4 border text-center">
+                                    <span className={cn(
+                                      "inline-flex items-center gap-1 px-2.5 py-1 rounded text-[10px] font-black tracking-wider uppercase",
+                                      isBetter 
+                                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/20" 
+                                        : "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-200/20"
+                                    )}>
+                                      {isBetter ? '💎 ' : '⚠️ '}
+                                      {pctDiff > 0 ? `+${pctDiff}%` : `${pctDiff}%`}
+                                    </span>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          </>
+                        )}
                       </tbody>
                     </table>
                   </div>
