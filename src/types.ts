@@ -68,6 +68,7 @@ export const WASTE_STREAMS: WasteStreamType[] = ['MSW', 'REC', 'OCC'];
 
 export const CONTAINER_SIZES: ContainerSize[] = [
   { id: '2yd', size: '2 Yard', type: 'Front Load' },
+  { id: '3yd', size: '3 Yard', type: 'Front Load' },
   { id: '4yd', size: '4 Yard', type: 'Front Load' },
   { id: '6yd', size: '6 Yard', type: 'Front Load' },
   { id: '8yd', size: '8 Yard', type: 'Front Load' },

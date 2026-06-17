@@ -184,19 +184,30 @@ export default function App() {
   const [sortBy, setSortBy] = useState<'name-asc' | 'cost-asc' | 'cost-desc'>('name-asc');
 
   // States for Going Rate Benchmarker & Area Estimator
-  const [benchmarkStream, setBenchmarkStream] = useState<'MSW' | 'REC' | 'OCC'>('MSW');
-  const [benchmarkSize, setBenchmarkSize] = useState('4 Yard');
-  const [benchmarkFrequency, setBenchmarkFrequency] = useState('1x/week');
+  const [pricingType, setPricingType] = useState<'commercial' | 'residential'>('commercial');
+  const [benchmarkBins, setBenchmarkBins] = useState<Array<{
+    id: string;
+    quantity: number;
+    size: string;
+    frequency: string;
+    stream: 'MSW' | 'REC' | 'OCC';
+  }>>([
+    { id: 'bin-1', quantity: 1, size: '4 Yard', frequency: '1x/week', stream: 'MSW' }
+  ]);
   const [benchmarkRegion, setBenchmarkRegion] = useState(1.0); // Default Midwest (Average)
   const [benchmarkUserPrice, setBenchmarkUserPrice] = useState('');
   const [pinnedBenchmark, setPinnedBenchmark] = useState<{
-    stream: 'MSW' | 'REC' | 'OCC';
-    size: string;
-    frequency: string;
+    bins: Array<{
+      quantity: number;
+      size: string;
+      frequency: string;
+      stream: 'MSW' | 'REC' | 'OCC';
+    }>;
     average: number;
     low: number;
     high: number;
     regionFactor: number;
+    pricingType: 'commercial' | 'residential';
   } | null>(null);
 
   // Auto-save feature
@@ -305,27 +316,45 @@ export default function App() {
   , [bidResults, chartView]);
 
   const goingRateResult = useMemo(() => {
-    const isRollOff = benchmarkSize.includes('30') || benchmarkSize.includes('40');
-    const yardSize = parseInt(benchmarkSize) || 4;
-    
-    const freqObj = FREQUENCIES.find(f => f.label === benchmarkFrequency) || FREQUENCIES[0];
-    const pickupsPerMonth = freqObj.multiplier;
-    
-    let baseMonthlyCost = 0;
-    
-    if (isRollOff) {
-      // Roll-off model: Monthly Rent + (Cost per Haul * pickups/month)
-      const rent = yardSize === 30 ? 140 : 180;
-      const costPerHaul = benchmarkStream === 'MSW' ? 320 : benchmarkStream === 'REC' ? 265 : 220;
-      baseMonthlyCost = rent + (costPerHaul * pickupsPerMonth);
-    } else {
-      // Front load model: Bin size Rent + (pick rate * size * pickups/month)
-      const rent = yardSize === 2 ? 25 : yardSize === 4 ? 35 : yardSize === 6 ? 45 : 55;
-      const pickRatePerYard = benchmarkStream === 'MSW' ? 11.0 : benchmarkStream === 'REC' ? 8.5 : 7.25;
-      baseMonthlyCost = rent + (pickRatePerYard * yardSize * pickupsPerMonth);
-    }
-    
-    const average = baseMonthlyCost * benchmarkRegion;
+    let totalAverage = 0;
+
+    benchmarkBins.forEach(bin => {
+      const isRollOff = bin.size.includes('30') || bin.size.includes('40');
+      const yardSize = parseInt(bin.size) || 4;
+      
+      const freqObj = FREQUENCIES.find(f => f.label === bin.frequency) || FREQUENCIES[0];
+      const pickupsPerMonth = freqObj.multiplier;
+      
+      let baseMonthlyCost = 0;
+      
+      if (isRollOff) {
+        // Roll-off model: Monthly Rent + (Cost per Haul * pickups/month)
+        const rent = yardSize === 30 ? 140 : 180;
+        const costPerHaul = bin.stream === 'MSW' ? 320 : bin.stream === 'REC' ? 265 : 220;
+        baseMonthlyCost = rent + (costPerHaul * pickupsPerMonth);
+      } else {
+        // Front load model: Bin size Rent + (pick rate * size * pickups/month)
+        const rent = yardSize === 2 ? 25 
+                   : yardSize === 3 ? 30
+                   : yardSize === 4 ? 35 
+                   : yardSize === 6 ? 45 
+                   : yardSize === 8 ? 55 
+                   : 25;
+        const pickRatePerYard = bin.stream === 'MSW' ? 11.0 : bin.stream === 'REC' ? 8.5 : 7.25;
+        baseMonthlyCost = rent + (pickRatePerYard * yardSize * pickupsPerMonth);
+      }
+      
+      let binTotal = baseMonthlyCost * (bin.quantity || 1);
+
+      // Residential Rate Adjustment
+      if (pricingType === 'residential') {
+        binTotal = binTotal * 0.85;
+      }
+
+      totalAverage += binTotal;
+    });
+
+    const average = totalAverage * benchmarkRegion;
     const low = average * 0.82;
     const high = average * 1.18;
     
@@ -334,28 +363,35 @@ export default function App() {
       low: Number(low.toFixed(2)),
       high: Number(high.toFixed(2))
     };
-  }, [benchmarkStream, benchmarkSize, benchmarkFrequency, benchmarkRegion]);
+  }, [benchmarkBins, benchmarkRegion, pricingType]);
 
   const handleAutoFillFromActive = () => {
     if (!activeBid || activeBid.services.length === 0) return;
-    const primaryService = activeBid.services[0];
-    setBenchmarkStream(primaryService.stream);
-    setBenchmarkSize(primaryService.containerSize);
-    setBenchmarkFrequency(primaryService.frequency);
-    // Multiply baseRate * quantity for exact compared subtotal of that service line item
-    const baseCost = (Number(primaryService.baseRate) || 0) * (Number(primaryService.quantity) || 1);
-    setBenchmarkUserPrice(String(baseCost));
+    
+    const filledBins = activeBid.services.map((s, idx) => ({
+      id: `autofill-${idx}-${Date.now()}`,
+      quantity: Number(s.quantity) || 1,
+      size: s.containerSize,
+      frequency: s.frequency,
+      stream: (s.stream as 'MSW' | 'REC' | 'OCC') || 'MSW'
+    }));
+
+    setBenchmarkBins(filledBins);
+
+    const totalCostOfServices = activeBid.services.reduce((acc, s) => {
+      return acc + ((Number(s.baseRate) || 0) * (Number(s.quantity) || 1));
+    }, 0);
+    setBenchmarkUserPrice(String(totalCostOfServices.toFixed(2)));
   };
 
   const handlePinBenchmark = () => {
     setPinnedBenchmark({
-      stream: benchmarkStream,
-      size: benchmarkSize,
-      frequency: benchmarkFrequency,
+      bins: benchmarkBins.map(b => ({ ...b })),
       average: goingRateResult.average,
       low: goingRateResult.low,
       high: goingRateResult.high,
-      regionFactor: benchmarkRegion
+      regionFactor: benchmarkRegion,
+      pricingType: pricingType
     });
   };
 
@@ -1031,55 +1067,177 @@ export default function App() {
                 </button>
               )}
 
-              <div className="space-y-3">
-                {/* Waste Stream select */}
+              {/* Rate Type Select Toggle */}
+              <div className="space-y-4">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Stream</label>
-                  <select
-                    value={benchmarkStream}
-                    onChange={(e) => setBenchmarkStream(e.target.value as any)}
-                    className={cn(
-                      "w-full text-xs rounded-xl px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                      darkMode ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-blue-500" : "bg-slate-50 border-slate-200 text-slate-700"
-                    )}
-                  >
-                    <option value="MSW">Solid Waste / MSW</option>
-                    <option value="REC">Recycling / REC</option>
-                    <option value="OCC">Cardboard Only / OCC</option>
-                  </select>
+                  <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
+                    💼 Rate Class
+                  </label>
+                  <div className="flex rounded-xl p-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200/40 dark:border-slate-700/40">
+                    <button
+                      type="button"
+                      onClick={() => setPricingType('commercial')}
+                      className={cn(
+                        "flex-1 py-1.5 text-[11px] font-black rounded-lg transition-all cursor-pointer text-center uppercase tracking-wider",
+                        pricingType === 'commercial'
+                          ? (darkMode ? "bg-slate-700 text-white shadow-sm" : "bg-white text-slate-800 shadow-sm")
+                          : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                      )}
+                    >
+                      Commercial (Broker Standard)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPricingType('residential')}
+                      className={cn(
+                        "flex-1 py-1.5 text-[11px] font-black rounded-lg transition-all cursor-pointer text-center uppercase tracking-wider",
+                        pricingType === 'residential'
+                          ? (darkMode ? "bg-slate-700 text-white shadow-sm" : "bg-white text-slate-800 shadow-sm")
+                          : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                      )}
+                    >
+                      Residential
+                    </button>
+                  </div>
                 </div>
 
-                {/* Grid for Bin Size and Frequency */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Bin Size</label>
-                    <select
-                      value={benchmarkSize}
-                      onChange={(e) => setBenchmarkSize(e.target.value)}
-                      className={cn(
-                        "w-full text-xs rounded-xl px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        darkMode ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-blue-500" : "bg-slate-50 border-slate-200 text-slate-700"
-                      )}
+                {/* Account Bins List Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between border-b border-dashed border-slate-200 dark:border-slate-800 pb-1.5">
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                      Bins / Equipment in Account
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setBenchmarkBins([
+                        ...benchmarkBins,
+                        {
+                          id: `bin-${Date.now()}`,
+                          quantity: 1,
+                          size: '4 Yard',
+                          frequency: '1x/week',
+                          stream: 'MSW'
+                        }
+                      ])}
+                      className="text-[10px] font-black text-blue-600 hover:text-blue-700 dark:text-blue-400 flex items-center gap-1 cursor-pointer transition-colors uppercase tracking-wider"
                     >
-                      {CONTAINER_SIZES.map((size) => (
-                        <option key={size.id} value={size.size}>{size.size}</option>
-                      ))}
-                    </select>
+                      ➕ Add Bin Size
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Frequency</label>
-                    <select
-                      value={benchmarkFrequency}
-                      onChange={(e) => setBenchmarkFrequency(e.target.value)}
-                      className={cn(
-                        "w-full text-xs rounded-xl px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        darkMode ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-blue-500" : "bg-slate-50 border-slate-200 text-slate-700"
-                      )}
-                    >
-                      {FREQUENCIES.map((freq) => (
-                        <option key={freq.id} value={freq.label}>{freq.label}</option>
-                      ))}
-                    </select>
+
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                    {benchmarkBins.map((bin, idx) => (
+                      <div 
+                        key={bin.id}
+                        className={cn(
+                          "p-3 rounded-xl border relative space-y-2.5 transition-all",
+                          darkMode ? "bg-slate-900/60 border-slate-800" : "bg-slate-50/50 border-slate-200/50"
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-505">
+                            Bin #{idx + 1}
+                          </span>
+                          {benchmarkBins.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setBenchmarkBins(benchmarkBins.filter(b => b.id !== bin.id))}
+                              className="text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 p-1 rounded-md transition-colors cursor-pointer"
+                              title="Delete Bin"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          {/* Unit Quantity */}
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                              Quantity
+                            </label>
+                            <select
+                              value={bin.quantity}
+                              onChange={(e) => {
+                                const qVal = Number(e.target.value);
+                                setBenchmarkBins(benchmarkBins.map(b => b.id === bin.id ? { ...b, quantity: qVal } : b));
+                              }}
+                              className={cn(
+                                "w-full rounded-lg px-2 py-1 text-xs border focus:outline-none focus:ring-1 focus:ring-blue-500",
+                                darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-white border-slate-200 text-slate-700"
+                              )}
+                            >
+                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(q => (
+                                <option key={q} value={q}>{q} Bin{q > 1 ? 's' : ''}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Bin Size dropdown */}
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                              Size
+                            </label>
+                            <select
+                              value={bin.size}
+                              onChange={(e) => {
+                                setBenchmarkBins(benchmarkBins.map(b => b.id === bin.id ? { ...b, size: e.target.value } : b));
+                              }}
+                              className={cn(
+                                "w-full rounded-lg px-2 py-1 text-xs border focus:outline-none focus:ring-1 focus:ring-blue-500",
+                                darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-white border-slate-200 text-slate-700"
+                              )}
+                            >
+                              {CONTAINER_SIZES.map((size) => (
+                                <option key={size.id} value={size.size}>{size.size}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Streams Dropdown */}
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                              Stream
+                            </label>
+                            <select
+                              value={bin.stream}
+                              onChange={(e) => {
+                                setBenchmarkBins(benchmarkBins.map(b => b.id === bin.id ? { ...b, stream: e.target.value as any } : b));
+                              }}
+                              className={cn(
+                                "w-full rounded-lg px-2 py-1 text-xs border focus:outline-none focus:ring-1 focus:ring-blue-500",
+                                darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-white border-slate-200 text-slate-700"
+                              )}
+                            >
+                              <option value="MSW">Solid Waste / MSW</option>
+                              <option value="REC">Recycling / REC</option>
+                              <option value="OCC">Cardboard Only / OCC</option>
+                            </select>
+                          </div>
+
+                          {/* Frequencies Dropdown */}
+                          <div>
+                            <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                              Frequency
+                            </label>
+                            <select
+                              value={bin.frequency}
+                              onChange={(e) => {
+                                setBenchmarkBins(benchmarkBins.map(b => b.id === bin.id ? { ...b, frequency: e.target.value } : b));
+                              }}
+                              className={cn(
+                                "w-full rounded-lg px-2 py-1 text-xs border focus:outline-none focus:ring-1 focus:ring-blue-500",
+                                darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-white border-slate-200 text-slate-700"
+                              )}
+                            >
+                              {FREQUENCIES.map((freq) => (
+                                <option key={freq.id} value={freq.label}>{freq.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -1224,10 +1382,9 @@ export default function App() {
                   {/* Pin to Comparison Option */}
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 mt-2">
                     {pinnedBenchmark && 
-                     pinnedBenchmark.stream === benchmarkStream && 
-                     pinnedBenchmark.size === benchmarkSize && 
-                     pinnedBenchmark.frequency === benchmarkFrequency && 
-                     pinnedBenchmark.regionFactor === benchmarkRegion ? (
+                     JSON.stringify(pinnedBenchmark.bins) === JSON.stringify(benchmarkBins) && 
+                     pinnedBenchmark.regionFactor === benchmarkRegion && 
+                     pinnedBenchmark.pricingType === pricingType ? (
                       <button
                         type="button"
                         onClick={handleClearBenchmark}
@@ -2405,9 +2562,17 @@ export default function App() {
                                 <>
                                   <tr className="bg-blue-50/20 dark:bg-blue-950/10">
                                     <td className="px-6 py-4 text-xs font-bold text-blue-600 dark:text-blue-400">
-                                      <div>Ballpark Average</div>
-                                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal normal-case leading-tight">
-                                        {pinnedBenchmark.size} {pinnedBenchmark.stream} @ {pinnedBenchmark.frequency}
+                                      <div>Ballpark Average ({pinnedBenchmark.pricingType === 'residential' ? 'Residential' : 'Commercial'})</div>
+                                      <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal normal-case leading-tight mt-0.5">
+                                        {pinnedBenchmark.bins ? (
+                                          pinnedBenchmark.bins.length === 1 ? (
+                                            `${pinnedBenchmark.bins[0].quantity}x ${pinnedBenchmark.bins[0].size} ${pinnedBenchmark.bins[0].stream} @ ${pinnedBenchmark.bins[0].frequency}`
+                                          ) : (
+                                            `${pinnedBenchmark.bins.length} Bins (${pinnedBenchmark.bins.map(b => `${b.quantity}x ${b.size.split(' ')[0]}`).join(', ')})`
+                                          )
+                                        ) : (
+                                          `${pinnedBenchmark.size} {pinnedBenchmark.stream} @ {pinnedBenchmark.frequency}`
+                                        )}
                                       </div>
                                     </td>
                                     {selectedCompareIds.map(id => {
@@ -2420,18 +2585,39 @@ export default function App() {
                                   </tr>
                                   <tr>
                                     <td className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
-                                      Your Cost (For Service above)
+                                      Your Cost (For service setup)
                                     </td>
                                     {selectedCompareIds.map(id => {
                                       const bid = bids.find(b => b.id === id);
-                                      const match = bid?.services.find(s => 
-                                        s.stream === pinnedBenchmark.stream && 
-                                        s.containerSize === pinnedBenchmark.size && 
-                                        s.frequency === pinnedBenchmark.frequency
-                                      );
+                                      if (!bid) return <td key={id} className="px-6 py-4 text-center text-xs text-slate-400">N/A</td>;
+                                      
+                                      const totalMatchedCost = (() => {
+                                        if (!pinnedBenchmark.bins) {
+                                          const match = bid.services.find(s => 
+                                            s.stream === pinnedBenchmark.stream && 
+                                            s.containerSize === pinnedBenchmark.size && 
+                                            s.frequency === pinnedBenchmark.frequency
+                                          );
+                                          return match ? (Number(match.baseRate) || 0) * (Number(match.quantity) || 1) : 0;
+                                        }
+                                        
+                                        let sum = 0;
+                                        pinnedBenchmark.bins.forEach(bin => {
+                                          const match = bid.services.find(s => 
+                                            s.stream === bin.stream && 
+                                            s.containerSize === bin.size && 
+                                            s.frequency === bin.frequency
+                                          );
+                                          if (match) {
+                                            sum += (Number(match.baseRate) || 0) * (Number(bin.quantity) || Number(match.quantity) || 1);
+                                          }
+                                        });
+                                        return sum;
+                                      })();
+
                                       return (
                                         <td key={id} className="px-6 py-4 text-center font-bold text-slate-700 dark:text-slate-200">
-                                          {match ? formatCurrency(match.baseRate) : <span className="text-slate-400 font-normal">N/A</span>}
+                                          {totalMatchedCost > 0 ? formatCurrency(totalMatchedCost) : <span className="text-slate-400 font-normal">N/A</span>}
                                         </td>
                                       );
                                     })}
@@ -2442,14 +2628,35 @@ export default function App() {
                                     </td>
                                     {selectedCompareIds.map(id => {
                                       const bid = bids.find(b => b.id === id);
-                                      const match = bid?.services.find(s => 
-                                        s.stream === pinnedBenchmark.stream && 
-                                        s.containerSize === pinnedBenchmark.size && 
-                                        s.frequency === pinnedBenchmark.frequency
-                                      );
-                                      if (!match) return <td key={id} className="px-6 py-4 text-center text-xs text-slate-400">—</td>;
+                                      if (!bid) return <td key={id} className="px-6 py-4 text-center text-xs text-slate-400">—</td>;
+
+                                      const totalMatchedCost = (() => {
+                                        if (!pinnedBenchmark.bins) {
+                                          const match = bid.services.find(s => 
+                                            s.stream === pinnedBenchmark.stream && 
+                                            s.containerSize === pinnedBenchmark.size && 
+                                            s.frequency === pinnedBenchmark.frequency
+                                          );
+                                          return match ? (Number(match.baseRate) || 0) * (Number(match.quantity) || 1) : 0;
+                                        }
+                                        
+                                        let sum = 0;
+                                        pinnedBenchmark.bins.forEach(bin => {
+                                          const match = bid.services.find(s => 
+                                            s.stream === bin.stream && 
+                                            s.containerSize === bin.size && 
+                                            s.frequency === bin.frequency
+                                          );
+                                          if (match) {
+                                            sum += (Number(match.baseRate) || 0) * (Number(bin.quantity) || Number(match.quantity) || 1);
+                                          }
+                                        });
+                                        return sum;
+                                      })();
+
+                                      if (totalMatchedCost === 0) return <td key={id} className="px-6 py-4 text-center text-xs text-slate-400">—</td>;
                                       
-                                      const pctDiff = Math.round(((match.baseRate - pinnedBenchmark.average) / pinnedBenchmark.average) * 100);
+                                      const pctDiff = Math.round(((totalMatchedCost - pinnedBenchmark.average) / pinnedBenchmark.average) * 100);
                                       const isBetter = pctDiff <= 0;
                                       
                                       return (
@@ -2964,9 +3171,17 @@ export default function App() {
                           <>
                             <tr className="bg-blue-50/20 dark:bg-blue-950/10">
                               <td className="p-4 border font-bold text-sm text-blue-600 dark:text-blue-400">
-                                <div>Market Ballpark Avg</div>
+                                <div>Market Ballpark Avg ({pinnedBenchmark.pricingType === 'residential' ? 'Residential' : 'Commercial'})</div>
                                 <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal normal-case mt-0.5 leading-tight">
-                                  {pinnedBenchmark.size} {pinnedBenchmark.stream} @ {pinnedBenchmark.frequency}
+                                  {pinnedBenchmark.bins ? (
+                                    pinnedBenchmark.bins.length === 1 ? (
+                                      `${pinnedBenchmark.bins[0].quantity}x ${pinnedBenchmark.bins[0].size} ${pinnedBenchmark.bins[0].stream} @ ${pinnedBenchmark.bins[0].frequency}`
+                                    ) : (
+                                      `${pinnedBenchmark.bins.length} Bins (${pinnedBenchmark.bins.map(b => `${b.quantity}x ${b.size.split(' ')[0]}`).join(', ')})`
+                                    )
+                                  ) : (
+                                    `${pinnedBenchmark.size} ${pinnedBenchmark.stream} @ ${pinnedBenchmark.frequency}`
+                                  )}
                                 </div>
                               </td>
                               {selectedCompareIds.map(id => (
@@ -2981,14 +3196,35 @@ export default function App() {
                               </td>
                               {selectedCompareIds.map(id => {
                                 const bid = bids.find(b => b.id === id);
-                                const match = bid?.services.find(s => 
-                                  s.stream === pinnedBenchmark.stream && 
-                                  s.containerSize === pinnedBenchmark.size && 
-                                  s.frequency === pinnedBenchmark.frequency
-                                );
+                                if (!bid) return <td key={id} className="p-4 border text-center text-xs text-slate-400">N/A</td>;
+                                
+                                const totalMatchedCost = (() => {
+                                  if (!pinnedBenchmark.bins) {
+                                    const match = bid.services.find(s => 
+                                      s.stream === pinnedBenchmark.stream && 
+                                      s.containerSize === pinnedBenchmark.size && 
+                                      s.frequency === pinnedBenchmark.frequency
+                                    );
+                                    return match ? (Number(match.baseRate) || 0) * (Number(match.quantity) || 1) : 0;
+                                  }
+                                  
+                                  let sum = 0;
+                                  pinnedBenchmark.bins.forEach(bin => {
+                                    const match = bid.services.find(s => 
+                                      s.stream === bin.stream && 
+                                      s.containerSize === bin.size && 
+                                      s.frequency === bin.frequency
+                                    );
+                                    if (match) {
+                                      sum += (Number(match.baseRate) || 0) * (Number(bin.quantity) || Number(match.quantity) || 1);
+                                    }
+                                  });
+                                  return sum;
+                                })();
+
                                 return (
                                   <td key={id} className="p-4 border text-center font-bold text-slate-700 dark:text-slate-200">
-                                    {match ? formatCurrency(match.baseRate) : <span className="text-slate-400 font-normal">N/A</span>}
+                                    {totalMatchedCost > 0 ? formatCurrency(totalMatchedCost) : <span className="text-slate-400 font-normal">N/A</span>}
                                   </td>
                                 );
                               })}
@@ -2999,14 +3235,35 @@ export default function App() {
                               </td>
                               {selectedCompareIds.map(id => {
                                 const bid = bids.find(b => b.id === id);
-                                const match = bid?.services.find(s => 
-                                  s.stream === pinnedBenchmark.stream && 
-                                  s.containerSize === pinnedBenchmark.size && 
-                                  s.frequency === pinnedBenchmark.frequency
-                                );
-                                if (!match) return <td key={id} className="p-4 border text-center text-xs text-slate-400">—</td>;
+                                if (!bid) return <td key={id} className="p-4 border text-center text-xs text-slate-400">—</td>;
+
+                                const totalMatchedCost = (() => {
+                                  if (!pinnedBenchmark.bins) {
+                                    const match = bid.services.find(s => 
+                                      s.stream === pinnedBenchmark.stream && 
+                                      s.containerSize === pinnedBenchmark.size && 
+                                      s.frequency === pinnedBenchmark.frequency
+                                    );
+                                    return match ? (Number(match.baseRate) || 0) * (Number(match.quantity) || 1) : 0;
+                                  }
+                                  
+                                  let sum = 0;
+                                  pinnedBenchmark.bins.forEach(bin => {
+                                    const match = bid.services.find(s => 
+                                      s.stream === bin.stream && 
+                                      s.containerSize === bin.size && 
+                                      s.frequency === bin.frequency
+                                    );
+                                    if (match) {
+                                      sum += (Number(match.baseRate) || 0) * (Number(bin.quantity) || Number(match.quantity) || 1);
+                                    }
+                                  });
+                                  return sum;
+                                })();
+
+                                if (totalMatchedCost === 0) return <td key={id} className="p-4 border text-center text-xs text-slate-400">—</td>;
                                 
-                                const pctDiff = Math.round(((match.baseRate - pinnedBenchmark.average) / pinnedBenchmark.average) * 100);
+                                const pctDiff = Math.round(((totalMatchedCost - pinnedBenchmark.average) / pinnedBenchmark.average) * 100);
                                 const isBetter = pctDiff <= 0;
                                 
                                 return (
