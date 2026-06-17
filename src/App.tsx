@@ -114,6 +114,7 @@ export default function App() {
   const [hoveredBidId, setHoveredBidId] = useState<string | null>(null);
   const [chartView, setChartView] = useState<'monthly' | 'annual'>('monthly');
   const [showComparisonView, setShowComparisonView] = useState(false);
+  const [sortBy, setSortBy] = useState<'name-asc' | 'cost-asc' | 'cost-desc'>('name-asc');
 
   // States for Going Rate Benchmarker & Area Estimator
   const [benchmarkStream, setBenchmarkStream] = useState<'MSW' | 'REC' | 'OCC'>('MSW');
@@ -208,6 +209,23 @@ export default function App() {
       results: calculateBidTotals(bid)
     }))
   , [bids]);
+
+  const sortedBids = useMemo(() => {
+    return [...bids].sort((a, b) => {
+      if (sortBy === 'name-asc') {
+        return a.haulerName.localeCompare(b.haulerName);
+      }
+      const costA = calculateBidTotals(a).monthlyTotal;
+      const costB = calculateBidTotals(b).monthlyTotal;
+      if (sortBy === 'cost-asc') {
+        return costA - costB;
+      }
+      if (sortBy === 'cost-desc') {
+        return costB - costA;
+      }
+      return 0;
+    });
+  }, [bids, sortBy]);
 
   const chartData = useMemo(() => 
     bidResults.map(({ bid, results }) => ({
@@ -408,7 +426,7 @@ export default function App() {
       doc.setFont('Helvetica', 'normal');
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184); // Slate-400
-      doc.text("Haululator by 939PRO STUDIO • Bid Comparison Report", 20, 10);
+      doc.text("BidLogic • Bid Comparison Report", 20, 10);
       doc.setDrawColor(226, 232, 240); // Slate-200
       doc.setLineWidth(0.2);
       doc.line(20, 12, pageWidth - 20, 12);
@@ -418,7 +436,7 @@ export default function App() {
     doc.setFont('Helvetica', 'bold');
     doc.setFontSize(18);
     doc.setTextColor(15, 23, 42); // Slate-900
-    doc.text("HAULULATOR COMPREHENSIVE REPORT", 20, y);
+    doc.text("BIDLOGIC COMPREHENSIVE REPORT", 20, y);
     y += 6;
 
     doc.setFont('Helvetica', 'normal');
@@ -704,7 +722,7 @@ export default function App() {
       doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
     }
 
-    doc.save(`Haululator_Bid_Comparison_${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`BidLogic_Bid_Comparison_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   return (
@@ -726,7 +744,7 @@ export default function App() {
               <h1 className={cn(
                 "text-xl font-bold tracking-tight leading-none",
                 darkMode ? "text-white" : "text-slate-900"
-              )}>Haululator by 939PRO STUDIO</h1>
+              )}>BidLogic</h1>
               <div className="flex items-center gap-1 mt-1">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client:</span>
                 <input 
@@ -768,12 +786,31 @@ export default function App() {
           {/* Sidebar: Bid List */}
           <div className="lg:col-span-4 space-y-6">
             <section>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Active Bids</h2>
-                <span className="text-xs font-medium bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">{bids.length}</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Active Bids</h2>
+                  <span className="text-xs font-medium bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full">{bids.length}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 dark:text-slate-500">Sort:</span>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                    className={cn(
+                      "text-[10px] font-bold rounded-lg border px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer shadow-sm",
+                      darkMode 
+                        ? "bg-slate-800 border-slate-700 text-slate-300 focus:border-blue-500" 
+                        : "bg-white border-slate-200 text-slate-600"
+                    )}
+                  >
+                    <option value="name-asc">Name (A-Z)</option>
+                    <option value="cost-asc">Monthly Cost (Low-High)</option>
+                    <option value="cost-desc">Monthly Cost (High-Low)</option>
+                  </select>
+                </div>
               </div>
                       <div className="space-y-3">
-                {bids.map(bid => {
+                {sortedBids.map(bid => {
                   const results = calculateBidTotals(bid);
                   const isSelected = selectedBidId === bid.id;
                   const isComparing = selectedCompareIds.includes(bid.id);
@@ -2535,7 +2572,7 @@ export default function App() {
         <div className="flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-2 opacity-50">
             <Truck className="w-5 h-5" />
-            <span className="text-sm font-bold uppercase tracking-widest text-slate-400">Haululator by 939PRO STUDIO v1.0</span>
+            <span className="text-sm font-bold uppercase tracking-widest text-slate-400">BidLogic v1.0</span>
           </div>
           <div className="flex items-center gap-8">
             <a href="#" className="text-xs font-bold text-slate-400 hover:text-slate-600 uppercase tracking-widest transition-colors">Documentation</a>
