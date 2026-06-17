@@ -184,7 +184,7 @@ export default function App() {
   const [sortBy, setSortBy] = useState<'name-asc' | 'cost-asc' | 'cost-desc'>('name-asc');
 
   // States for Going Rate Benchmarker & Area Estimator
-  const [pricingType, setPricingType] = useState<'commercial' | 'residential'>('commercial');
+  const pricingType = 'commercial';
   const [benchmarkBins, setBenchmarkBins] = useState<Array<{
     id: string;
     quantity: number;
@@ -196,6 +196,20 @@ export default function App() {
   ]);
   const [benchmarkRegion, setBenchmarkRegion] = useState(1.0); // Default Midwest (Average)
   const [benchmarkUserPrice, setBenchmarkUserPrice] = useState('');
+
+  // States for 'Waste Services' table sorting
+  const [servicesSortField, setServicesSortField] = useState<'stream' | 'baseRate' | 'rowTotal' | null>(null);
+  const [servicesSortDirection, setServicesSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // State for Quick Notes persistent across sessions
+  const [quickNotes, setQuickNotes] = useState<string>(() => {
+    return localStorage.getItem('bidout_quick_notes') || '';
+  });
+
+  // Sync Quick Notes to localStorage
+  React.useEffect(() => {
+    localStorage.setItem('bidout_quick_notes', quickNotes);
+  }, [quickNotes]);
   const [pinnedBenchmark, setPinnedBenchmark] = useState<{
     bins: Array<{
       quantity: number;
@@ -315,6 +329,69 @@ export default function App() {
     }))
   , [bidResults, chartView]);
 
+  const sortedServices = useMemo(() => {
+    if (!activeBid || !activeBid.services) return [];
+    const services = [...activeBid.services];
+    if (!servicesSortField) return services;
+
+    return services.sort((a, b) => {
+      let valA: any = 0;
+      let valB: any = 0;
+
+      if (servicesSortField === 'stream') {
+        valA = a.stream || '';
+        valB = b.stream || '';
+      } else if (servicesSortField === 'baseRate') {
+        valA = Number(a.baseRate) || 0;
+        valB = Number(b.baseRate) || 0;
+      } else if (servicesSortField === 'rowTotal') {
+        valA = (Number(a.baseRate) || 0) * (Number(a.quantity) || 0);
+        valB = (Number(b.baseRate) || 0) * (Number(b.quantity) || 0);
+      }
+
+      if (valA < valB) return servicesSortDirection === 'asc' ? -1 : 1;
+      if (valA > valB) return servicesSortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [activeBid?.services, servicesSortField, servicesSortDirection]);
+
+  const comparisonTrendData = useMemo(() => {
+    if (selectedCompareIds.length === 0) return [];
+    const selectedBids = selectedCompareIds.map(id => bids.find(b => b.id === id)).filter(Boolean) as Bid[];
+    if (selectedBids.length === 0) return [];
+
+    const maxTerm = Math.max(...selectedBids.map(b => Number(b.contractTermMonths) || 36));
+    const data = [];
+
+    // Simple arrays of objects tracking cumulative state for each selected bid.
+    const trackingState = selectedBids.map(bid => {
+      const results = calculateBidTotals(bid);
+      return {
+        haulerName: bid.haulerName,
+        monthlyTotal: results.monthlyTotal,
+        cpi: Number(bid.cpiEscalationPercent) || 0,
+        cumulative: 0
+      };
+    });
+
+    for (let month = 1; month <= maxTerm; month++) {
+      const dataEntry: any = {
+        monthLabel: `Mo ${month}`,
+        month
+      };
+
+      trackingState.forEach(item => {
+        const yearIndex = Math.floor((month - 1) / 12);
+        const escalatedMonthlyCost = item.monthlyTotal * Math.pow(1 + item.cpi / 100, yearIndex);
+        item.cumulative += escalatedMonthlyCost;
+        dataEntry[item.haulerName] = Number(item.cumulative.toFixed(2));
+      });
+
+      data.push(dataEntry);
+    }
+    return data;
+  }, [selectedCompareIds, bids]);
+
   const goingRateResult = useMemo(() => {
     let totalAverage = 0;
 
@@ -364,6 +441,19 @@ export default function App() {
       high: Number(high.toFixed(2))
     };
   }, [benchmarkBins, benchmarkRegion, pricingType]);
+
+  const handleToggleServicesSort = (field: 'stream' | 'baseRate' | 'rowTotal') => {
+    if (servicesSortField === field) {
+      if (servicesSortDirection === 'asc') {
+        setServicesSortDirection('desc');
+      } else {
+        setServicesSortField(null);
+      }
+    } else {
+      setServicesSortField(field);
+      setServicesSortDirection('asc');
+    }
+  };
 
   const handleAutoFillFromActive = () => {
     if (!activeBid || activeBid.services.length === 0) return;
@@ -1067,37 +1157,18 @@ export default function App() {
                 </button>
               )}
 
-              {/* Rate Type Select Toggle */}
+              {/* Rate Type Select Information Badge */}
               <div className="space-y-4">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
                     💼 Rate Class
                   </label>
-                  <div className="flex rounded-xl p-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200/40 dark:border-slate-700/40">
-                    <button
-                      type="button"
-                      onClick={() => setPricingType('commercial')}
-                      className={cn(
-                        "flex-1 py-1.5 text-[11px] font-black rounded-lg transition-all cursor-pointer text-center uppercase tracking-wider",
-                        pricingType === 'commercial'
-                          ? (darkMode ? "bg-slate-700 text-white shadow-sm" : "bg-white text-slate-800 shadow-sm")
-                          : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                      )}
-                    >
-                      Commercial (Broker Standard)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPricingType('residential')}
-                      className={cn(
-                        "flex-1 py-1.5 text-[11px] font-black rounded-lg transition-all cursor-pointer text-center uppercase tracking-wider",
-                        pricingType === 'residential'
-                          ? (darkMode ? "bg-slate-700 text-white shadow-sm" : "bg-white text-slate-800 shadow-sm")
-                          : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                      )}
-                    >
-                      Residential
-                    </button>
+                  <div className={cn(
+                    "flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold border",
+                    darkMode ? "bg-slate-800 border-slate-700/60 text-slate-300" : "bg-slate-50 border-slate-200 text-slate-700"
+                  )}>
+                    <span className="flex-1">Commercial (Broker Standard)</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 tracking-wide font-extrabold uppercase">Broker standard</span>
                   </div>
                 </div>
 
@@ -1405,6 +1476,36 @@ export default function App() {
                 </div>
               </div>
             </section>
+
+            {/* Quick Notes Sidebar Element */}
+            <section className={cn(
+              "rounded-2xl border p-6 transition-colors shadow-sm space-y-4",
+              darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+            )}>
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-900/35 text-indigo-600 dark:text-indigo-400">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className={cn(
+                    "text-base font-bold",
+                    darkMode ? "text-slate-100" : "text-slate-800"
+                  )}>Quick Notes</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">Temporary, global project reminders</p>
+                </div>
+              </div>
+              <textarea
+                value={quickNotes}
+                onChange={(e) => setQuickNotes(e.target.value)}
+                placeholder="Type your temporary client or project notes here... (saved automatically across sessions)"
+                className={cn(
+                  "w-full h-32 px-3.5 py-2.5 text-xs rounded-xl border focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium leading-relaxed resize-none",
+                  darkMode 
+                    ? "bg-slate-950/40 border-slate-800 text-slate-200 focus:border-indigo-500 placeholder-slate-600" 
+                    : "bg-slate-50 border-slate-200/60 text-slate-700 placeholder-slate-400"
+                )}
+              />
+            </section>
           </div>
 
           {/* Main Content: Bid Details */}
@@ -1709,9 +1810,15 @@ export default function App() {
                                 className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer h-3.5 w-3.5"
                               />
                             </th>
-                            <th className="px-6 py-4">
+                            <th className="px-6 py-4 cursor-pointer select-none group/sort" onClick={() => handleToggleServicesSort('stream')}>
                               <div className="flex items-center gap-1 group/th relative">
-                                Stream <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                <span className="hover:text-blue-500 transition-colors">Stream</span>
+                                {servicesSortField === 'stream' ? (
+                                  <span className="text-blue-500 font-bold ml-1">{servicesSortDirection === 'asc' ? '▲' : '▼'}</span>
+                                ) : (
+                                  <span className="text-slate-300 opacity-0 group-hover/sort:opacity-100 transition-opacity ml-1">▲</span>
+                                )}
+                                <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
                                 <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
                                   {TABLE_COLUMN_TOOLTIPS['Stream']}
                                 </div>
@@ -1769,18 +1876,29 @@ export default function App() {
                                 </th>
                               </>
                             )}
-                            <th className="px-6 py-4">
+                            <th className="px-6 py-4 cursor-pointer select-none group/sort" onClick={() => handleToggleServicesSort('baseRate')}>
                               <div className="flex items-center gap-1 group/th relative">
-                                Total Price <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
+                                <span className="hover:text-blue-500 transition-colors">Total Price</span>
+                                {servicesSortField === 'baseRate' ? (
+                                  <span className="text-blue-500 font-bold ml-1">{servicesSortDirection === 'asc' ? '▲' : '▼'}</span>
+                                ) : (
+                                  <span className="text-slate-300 opacity-0 group-hover/sort:opacity-100 transition-opacity ml-1">▲</span>
+                                )}
+                                <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
                                 <div className="absolute top-full left-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl">
                                   {TABLE_COLUMN_TOOLTIPS['Total Price']}
                                 </div>
                               </div>
                             </th>
-                            <th className="px-6 py-4 text-right">
+                            <th className="px-6 py-4 text-right cursor-pointer select-none group/sort" onClick={() => handleToggleServicesSort('rowTotal')}>
                               <div className="flex items-center justify-end gap-1 group/th relative">
                                 <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
-                                Row Total
+                                <span className="hover:text-blue-500 transition-colors">Row Total</span>
+                                {servicesSortField === 'rowTotal' ? (
+                                  <span className="text-blue-500 font-bold ml-1">{servicesSortDirection === 'asc' ? '▲' : '▼'}</span>
+                                ) : (
+                                  <span className="text-slate-300 opacity-0 group-hover/sort:opacity-100 transition-opacity ml-1">▲</span>
+                                )}
                                 <div className="absolute top-full right-0 mt-2 p-2 bg-slate-800 text-white text-[9px] font-normal rounded w-32 hidden group-hover/th:block z-10 normal-case tracking-normal shadow-xl text-left">
                                   {TABLE_COLUMN_TOOLTIPS['Row Total']}
                                 </div>
@@ -1793,7 +1911,7 @@ export default function App() {
                           "divide-y",
                           darkMode ? "divide-slate-800" : "divide-slate-50"
                         )}>
-                          {activeBid.services.map(service => (
+                          {sortedServices.map(service => (
                             <tr key={service.id} className={cn(
                               "group transition-colors",
                               darkMode ? "hover:bg-slate-800/30" : "hover:bg-slate-50/50"
@@ -3285,6 +3403,66 @@ export default function App() {
                         )}
                       </tbody>
                     </table>
+                  </div>
+                </section>
+
+                {/* Contract Term Trend Chart */}
+                <section className={cn(
+                  "p-6 rounded-2xl border shadow-sm transition-colors",
+                  darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+                )}>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-indigo-500 mb-6 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" /> Contract Term Projection (CPI Escapes Accounted)
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-6 leading-relaxed font-semibold">
+                    This interactive chart plots the projected cumulative cost of each selected bid month-by-month over the entire contract term. Notice how initial savings may diverge over the years due to different CPI escalations compounding.
+                  </p>
+                  <div className="h-[350px] w-full min-h-[350px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={comparisonTrendData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#1e293b" : "#f1f5f9"} />
+                        <XAxis 
+                          dataKey="monthLabel" 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fill: darkMode ? '#94a3b8' : '#64748b', fontSize: 10, fontWeight: 600 }}
+                        />
+                        <YAxis 
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{ fill: darkMode ? '#94a3b8' : '#64748b', fontSize: 10, fontWeight: 600 }}
+                          tickFormatter={(value) => `$${(value / 1000).toFixed(1)}k`}
+                        />
+                        <Tooltip 
+                          formatter={(value: number) => [formatCurrency(value), 'Cumulative Cost']}
+                          contentStyle={{ 
+                            borderRadius: '12px', 
+                            border: 'none', 
+                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                            backgroundColor: darkMode ? '#0f172a' : '#ffffff',
+                            color: darkMode ? '#f8fafc' : '#0f172a'
+                          }}
+                        />
+                        <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', fontWeight: 'bold' }} />
+                        {selectedCompareIds.map((id, index) => {
+                          const bid = bids.find(b => b.id === id);
+                          if (!bid) return null;
+                          const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
+                          const strokeColor = COLORS[index % COLORS.length];
+                          return (
+                            <Line 
+                              key={id}
+                              type="monotone" 
+                              dataKey={bid.haulerName} 
+                              stroke={strokeColor} 
+                              strokeWidth={3} 
+                              dot={false}
+                              activeDot={{ r: 6 }} 
+                            />
+                          );
+                        })}
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
                 </section>
 
