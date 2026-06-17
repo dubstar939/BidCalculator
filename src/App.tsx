@@ -901,11 +901,25 @@ export default function App() {
                       <>
                         <div className="p-4 bg-white/10 rounded-xl border border-white/10">
                           <p className="text-xs text-slate-400 uppercase font-bold tracking-wider mb-1">Potential Monthly Savings</p>
-                          <p className="text-2xl font-black text-emerald-400">{formatCurrency(monthlySavings)}</p>
+                          <div className="flex items-baseline justify-between gap-1 flex-wrap">
+                            <p className="text-2xl font-black text-emerald-400">{formatCurrency(monthlySavings)}</p>
+                            {worst.results.monthlyTotal > 0 && (
+                              <span className="text-xs font-black px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/10">
+                                {(((worst.results.monthlyTotal - best.results.monthlyTotal) / worst.results.monthlyTotal) * 100).toFixed(1)}% savings
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="p-4 bg-white/10 rounded-xl border border-white/10">
                           <p className="text-xs text-slate-400 uppercase font-bold tracking-wider mb-1">Total Contract Savings</p>
-                          <p className="text-2xl font-black text-blue-400">{formatCurrency(termSavings)}</p>
+                          <div className="flex items-baseline justify-between gap-1 flex-wrap">
+                            <p className="text-2xl font-black text-blue-400">{formatCurrency(termSavings)}</p>
+                            {worst.results.contractTermTotal > 0 && (
+                              <span className="text-xs font-black px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/10">
+                                {(((worst.results.contractTermTotal - best.results.contractTermTotal) / worst.results.contractTermTotal) * 100).toFixed(1)}% savings
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <p className="text-xs text-slate-500 italic">
                           Comparing {best.bid.haulerName} vs {worst.bid.haulerName}
@@ -1720,6 +1734,37 @@ export default function App() {
                         </button>
                       </div>
                       <div className="p-4 space-y-3">
+                        {/* Fees Summary Bar */}
+                        {activeResults && (() => {
+                          const totalFeesCount = activeBid.fees.length + (activeBid.fuelSurchargePercent > 0 ? 1 : 0) + (activeBid.environmentalFeePercent > 0 ? 1 : 0);
+                          return (
+                            <div className={cn(
+                              "flex items-center justify-between p-3.5 rounded-xl border mb-3 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors",
+                              darkMode 
+                                ? "bg-emerald-950/20 border-emerald-900/30 text-emerald-400" 
+                                : "bg-emerald-50 border-emerald-100 text-emerald-800"
+                            )}>
+                              <div className="flex flex-col gap-0.5">
+                                <span className={cn(
+                                  "text-[10px] font-bold uppercase tracking-wider",
+                                  darkMode ? "text-emerald-500/80" : "text-emerald-600/80"
+                                )}>Active Fees Count</span>
+                                <span className="text-sm font-black flex items-center gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  {totalFeesCount} Fee{totalFeesCount !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                              <div className="text-right flex flex-col gap-0.5">
+                                <span className={cn(
+                                  "text-[10px] font-bold uppercase tracking-wider",
+                                  darkMode ? "text-emerald-500/80" : "text-emerald-600/80"
+                                )}>Total Monthly Cost</span>
+                                <span className="text-sm font-black">{formatCurrency(activeResults.monthlyFees)}</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         {selectedBid.fees.map(fee => (
                           <div key={fee.id} className={cn(
                             "flex flex-col p-3 rounded-xl border group transition-colors",
