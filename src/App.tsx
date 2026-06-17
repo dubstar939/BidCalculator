@@ -103,9 +103,76 @@ const isFeeExceeding10Percent = (fee: Fee, bid: Bid) => {
   return cost > subtotal * 0.1;
 };
 
+const CountUp = ({ value, duration = 800, formatter = formatCurrency }: { value: number; duration?: number; formatter?: (v: number) => string }) => {
+  const [displayValue, setDisplayValue] = React.useState(value);
+
+  React.useEffect(() => {
+    let startTimestamp: number | null = null;
+    const startValue = displayValue;
+    const endValue = value;
+    
+    if (startValue === endValue) return;
+
+    let animId: number;
+
+    const step = (timestamp: number) => {
+      if (!startTimestamp) startTimestamp = timestamp;
+      const elapsed = timestamp - startTimestamp;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      const easeProgress = progress * (2 - progress);
+      
+      const current = startValue + (endValue - startValue) * easeProgress;
+      setDisplayValue(current);
+
+      if (progress < 1) {
+        animId = window.requestAnimationFrame(step);
+      } else {
+        setDisplayValue(endValue);
+      }
+    };
+
+    animId = window.requestAnimationFrame(step);
+    return () => {
+      if (animId) {
+        window.cancelAnimationFrame(animId);
+      }
+    };
+  }, [value, duration]);
+
+  return <span>{formatter(displayValue)}</span>;
+};
+
 export default function App() {
   const [bids, setBids] = useState<Bid[]>(INITIAL_BIDS);
   const [selectedBidId, setSelectedBidId] = useState<string | null>(INITIAL_BIDS[0].id);
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'info' | 'warning' | 'success' }[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+
+  // Reset selected services when active bid changes
+  React.useEffect(() => {
+    setSelectedServiceIds([]);
+  }, [selectedBidId]);
+
+  const addToast = (message: string, type: 'info' | 'warning' | 'success' = 'warning') => {
+    const id = `toast-${Date.now()}`;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4500);
+  };
+
+  const checkAndToastFeeExceededList = (oldBid: Bid | null, newBid: Bid) => {
+    if (!oldBid) return;
+    newBid.fees.forEach(fee => {
+      const oldFee = oldBid.fees.find(f => f.id === fee.id);
+      const wasExceeding = oldFee ? isFeeExceeding10Percent(oldFee, oldBid) : false;
+      const isExceedingNow = isFeeExceeding10Percent(fee, newBid);
+      if (isExceedingNow && !wasExceeding) {
+        addToast(`Fee "${fee.name}" exceeds 10% of base monthly services (${formatCurrency(getFeeMonthlyCost(fee, newBid))} / month).`);
+      }
+    });
+  };
   const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
   const [clientName, setClientName] = useState('Acme Corp');
   const [isEditing, setIsEditing] = useState(false);
@@ -344,6 +411,9 @@ export default function App() {
   };
 
   const updateBid = (updatedBid: Bid) => {
+    const oldBid = bids.find(b => b.id === updatedBid.id) || null;
+    checkAndToastFeeExceededList(oldBid, updatedBid);
+
     if (isEditing) {
       setEditingBid(updatedBid);
     } else {
@@ -902,7 +972,7 @@ export default function App() {
                         <div className="p-4 bg-white/10 rounded-xl border border-white/10">
                           <p className="text-xs text-slate-400 uppercase font-bold tracking-wider mb-1">Potential Monthly Savings</p>
                           <div className="flex items-baseline justify-between gap-1 flex-wrap">
-                            <p className="text-2xl font-black text-emerald-400">{formatCurrency(monthlySavings)}</p>
+                            <p className="text-2xl font-black text-emerald-400"><CountUp value={monthlySavings} /></p>
                             {worst.results.monthlyTotal > 0 && (
                               <span className="text-xs font-black px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/10">
                                 {(((worst.results.monthlyTotal - best.results.monthlyTotal) / worst.results.monthlyTotal) * 100).toFixed(1)}% savings
@@ -913,7 +983,7 @@ export default function App() {
                         <div className="p-4 bg-white/10 rounded-xl border border-white/10">
                           <p className="text-xs text-slate-400 uppercase font-bold tracking-wider mb-1">Total Contract Savings</p>
                           <div className="flex items-baseline justify-between gap-1 flex-wrap">
-                            <p className="text-2xl font-black text-blue-400">{formatCurrency(termSavings)}</p>
+                            <p className="text-2xl font-black text-blue-400"><CountUp value={termSavings} /></p>
                             {worst.results.contractTermTotal > 0 && (
                               <span className="text-xs font-black px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/10">
                                 {(((worst.results.contractTermTotal - best.results.contractTermTotal) / worst.results.contractTermTotal) * 100).toFixed(1)}% savings
@@ -1399,6 +1469,68 @@ export default function App() {
                         <Plus className="w-4 h-4" /> Add Service
                       </button>
                     </div>
+                    {/* Bulk Action Bar */}
+                    {selectedServiceIds.length > 0 && (
+                      <div className={cn(
+                        "flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-b text-xs font-semibold animate-fade-in",
+                        darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-blue-50 border-blue-100 text-blue-900"
+                      )}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold bg-blue-500 text-white px-2 py-0.5 rounded-full text-[10px]">
+                            {selectedServiceIds.length}
+                          </span>
+                          <span>selected service{selectedServiceIds.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Change Frequency:</span>
+                            <select
+                              onChange={(e) => {
+                                const freq = e.target.value;
+                                if (!freq) return;
+                                const newServices = activeBid.services.map(s => 
+                                  selectedServiceIds.includes(s.id) ? { ...s, frequency: freq as any } : s
+                                );
+                                updateBid({ ...activeBid, services: newServices });
+                                setSelectedServiceIds([]);
+                                e.target.value = '';
+                              }}
+                              className={cn(
+                                "text-[10px] font-bold rounded-lg border px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer shadow-sm",
+                                darkMode ? "bg-slate-900 border-slate-700 text-slate-300" : "bg-white border-slate-200 text-slate-700"
+                              )}
+                              defaultValue=""
+                            >
+                              <option value="" disabled>Select frequency...</option>
+                              {FREQUENCIES.map(f => (
+                                <option key={f} value={f}>{f}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <button
+                            onClick={() => {
+                              const newServices = activeBid.services.filter(s => !selectedServiceIds.includes(s.id));
+                              updateBid({ ...activeBid, services: newServices });
+                              setSelectedServiceIds([]);
+                            }}
+                            className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 shadow-sm"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Delete Selected
+                          </button>
+
+                          <button
+                            onClick={() => setSelectedServiceIds([])}
+                            className={cn(
+                              "px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all",
+                              darkMode ? "hover:bg-slate-700 text-slate-300" : "hover:bg-slate-200/50 text-slate-600"
+                            )}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
                         <thead>
@@ -1406,6 +1538,20 @@ export default function App() {
                             "text-[10px] font-bold uppercase tracking-widest border-b",
                             darkMode ? "text-slate-500 border-slate-800" : "text-slate-400 border-slate-100"
                           )}>
+                            <th className="px-6 py-4 w-12 text-center">
+                              <input 
+                                type="checkbox"
+                                checked={activeBid.services.length > 0 && selectedServiceIds.length === activeBid.services.length}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedServiceIds(activeBid.services.map(s => s.id));
+                                  } else {
+                                    setSelectedServiceIds([]);
+                                  }
+                                }}
+                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer h-3.5 w-3.5"
+                              />
+                            </th>
                             <th className="px-6 py-4">
                               <div className="flex items-center gap-1 group/th relative">
                                 Stream <Info className="w-3 h-3 text-slate-300 group-hover/th:text-blue-500 transition-colors" />
@@ -1495,6 +1641,20 @@ export default function App() {
                               "group transition-colors",
                               darkMode ? "hover:bg-slate-800/30" : "hover:bg-slate-50/50"
                             )}>
+                              <td className="px-6 py-4 w-12 text-center">
+                                <input 
+                                  type="checkbox"
+                                  checked={selectedServiceIds.includes(service.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedServiceIds(prev => [...prev, service.id]);
+                                    } else {
+                                      setSelectedServiceIds(prev => prev.filter(id => id !== service.id));
+                                    }
+                                  }}
+                                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer h-3.5 w-3.5"
+                                />
+                              </td>
                               <td className="px-6 py-4">
                                 {isEditing ? (
                                   <select 
@@ -1690,7 +1850,7 @@ export default function App() {
                           ))}
                           {activeBid.services.length === 0 && (
                             <tr>
-                              <td colSpan={isEditing ? 10 : 7} className="px-6 py-12 text-center text-slate-400 italic text-sm">
+                              <td colSpan={isEditing ? 11 : 8} className="px-6 py-12 text-center text-slate-400 italic text-sm">
                                 No services added yet. Click "Add Service" to begin.
                               </td>
                             </tr>
@@ -1699,6 +1859,88 @@ export default function App() {
                       </table>
                     </div>
                   </section>
+
+                  {/* KPI Dashboard Section */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                    {/* KPI Card 1: Average Monthly Cost */}
+                    <div className={cn(
+                      "p-5 rounded-2xl border shadow-sm flex items-center gap-4 transition-colors",
+                      darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+                    )}>
+                      <div className="p-3 rounded-xl bg-blue-500/10 text-blue-500">
+                        <TrendingDown className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className={cn(
+                          "text-[10px] font-bold uppercase tracking-wider",
+                          darkMode ? "text-slate-400" : "text-slate-500"
+                        )}>Average Monthly Cost Across All Bids</p>
+                        <p className={cn(
+                          "text-xl font-black mt-0.5",
+                          darkMode ? "text-white" : "text-slate-900"
+                        )}>
+                          {formatCurrency(
+                            bids.reduce((sum, b) => sum + calculateBidTotals(b).monthlyTotal, 0) / (bids.length || 1)
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* KPI Card 2: Total Active Waste Tonnage */}
+                    <div className={cn(
+                      "p-5 rounded-2xl border shadow-sm flex items-center gap-4 transition-colors",
+                      darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+                    )}>
+                      <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-500">
+                        <Truck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className={cn(
+                          "text-[10px] font-bold uppercase tracking-wider",
+                          darkMode ? "text-slate-400" : "text-slate-500"
+                        )}>Total Active Waste Tonnage</p>
+                        <p className={cn(
+                          "text-xl font-black mt-0.5",
+                          darkMode ? "text-white" : "text-slate-900"
+                        )}>
+                          {activeResults ? `${activeResults.totalEstimatedTons} Tons` : '0 Tons'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* KPI Card 3: % Bids with High Fees */}
+                    {(() => {
+                      const bidsWithHighFeesCount = bids.filter(bid => bid.fees.some(f => isFeeExceeding10Percent(f, bid))).length;
+                      const pctBidsWithHighFees = bids.length > 0 ? Math.round((bidsWithHighFeesCount / bids.length) * 100) : 0;
+                      return (
+                        <div className={cn(
+                          "p-5 rounded-2xl border shadow-sm flex items-center gap-4 transition-colors",
+                          darkMode ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+                        )}>
+                          <div className={cn(
+                            "p-3 rounded-xl",
+                            pctBidsWithHighFees > 30 
+                              ? "bg-rose-500/10 text-rose-500" 
+                              : "bg-amber-500/10 text-amber-500"
+                          )}>
+                            <DollarSign className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className={cn(
+                              "text-[10px] font-bold uppercase tracking-wider",
+                              darkMode ? "text-slate-400" : "text-slate-500"
+                            )}>Percentage of Bids with High Fees</p>
+                            <p className={cn(
+                              "text-xl font-black mt-0.5",
+                              darkMode ? "text-white" : "text-slate-900"
+                            )}>
+                              {pctBidsWithHighFees}%
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
 
                   {/* Fees Section */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -2921,6 +3163,33 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Dynamic Toasts Overlay */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2.5 max-w-sm w-full pointer-events-none">
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            className={cn(
+              "p-4 rounded-xl border shadow-xl flex items-start gap-2.5 pointer-events-auto transition-all duration-300",
+              toast.type === 'warning' 
+                ? "bg-amber-50 dark:bg-amber-950 border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-100" 
+                : "bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-900 text-blue-900 dark:text-blue-100"
+            )}
+          >
+            <span className="text-base select-none">⚠️</span>
+            <div className="flex-1 text-xs">
+              <p className="font-bold">Fee Warning</p>
+              <p className="mt-0.5 leading-relaxed">{toast.message}</p>
+            </div>
+            <button 
+              onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-sm cursor-pointer px-1"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
